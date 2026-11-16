@@ -1,0 +1,59 @@
+services:
+  mongo:
+    image: mongo:7
+    command: ["--replSet", "rs0", "--bind_ip_all"]
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo-data:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping')"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # Multi-document transactions (used by the correction endpoint) require a
+  # replica set even with a single node, so this runs rs.initiate() once and
+  # exits; api/worker wait on it completing successfully.
+  mongo-init:
+    image: mongo:7
+    depends_on:
+      mongo:
+        condition: service_healthy
+    restart: "no"
+    entrypoint:
+      - bash
+      - -c
+      - |
+        mongosh --host mongo:27017 --eval '
+          try {
+            rs.status().ok;
+            print("replica set already initiated");
+          } catch (e) {
+            rs.initiate({ _id: "rs0", members: [{ _id: 0, host: "mongo:27017" }] });
+            print("replica set initiated");
+          }
+        '
+
+  api:
+    build: ./api
+    depends_on:
+      mongo-init:
+        condition: service_completed_successfully
+    environment:
+      NODE_ENV: development
+      PORT: "4000"
+      MONGO_URI: "mongodb://mongo:27017/sycamore?replicaSet=rs0"
+      JWT_SECRET: "dev-only-secret-change-me"
+      LOG_LEVEL: "info"
+      MOCK_LLM_MODE: "ok"
+      MOCK_LLM_FAILURE_RATE: "0"
+      WORKER_POLL_INTERVAL_MS: "1000"
+      WORKER_LOCK_MS: "30000"
+      SEED_PASSWORD: "Passw0rd!2024"
+    ports:
+      - "4000:4000"
+    command: ["npx", "tsx", "src/http/server.ts"]
+
+volumes:
+  mongo-data:

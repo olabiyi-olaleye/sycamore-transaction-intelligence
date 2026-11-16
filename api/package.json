@@ -1,0 +1,36 @@
+{
+  "name": "sycamore-api",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "dev": "tsx watch src/http/server.ts",
+    "start": "node dist/http/server.js",
+    "worker": "tsx watch src/worker/index.ts",
+    "worker:start": "node dist/worker/index.js",
+    "build": "tsc -p tsconfig.json",
+    "seed": "tsx src/seed/seed.ts",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc -p tsconfig.typecheck.json",
+    "openapi": "tsx src/openapi/export.ts"
+  },
+  "dependencies": {
+    "@fastify/cors": "^10.0.1",
+    "argon2": "^0.41.1",
+    "fastify": "^5.1.0",
+    "jsonwebtoken": "^9.0.2",
+    "mongoose": "^8.8.1",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@types/jsonwebtoken": "^9.0.7",
+    "@types/node": "^22.9.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.6.3",
+    "vitest": "^5.1.0"
+  }
+}
