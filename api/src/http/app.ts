@@ -9,6 +9,7 @@ import { authHook } from './authHook.js';
 import { authRoutes, meRoutes } from '../modules/auth/auth.routes.js';
 import { accountsRoutes } from '../modules/accounts/accounts.routes.js';
 import { transactionsRoutes } from '../modules/transactions/transactions.routes.js';
+import { dashboardRoutes } from '../modules/dashboard/dashboard.routes.js';
 
 export function buildApp(): FastifyInstance {
   const app = Fastify({
@@ -44,6 +45,7 @@ export function buildApp(): FastifyInstance {
       protectedApp.register(meRoutes);
       protectedApp.register(accountsRoutes);
       protectedApp.register(transactionsRoutes);
+      protectedApp.register(dashboardRoutes);
     },
     { prefix: '/api/v1' },
   );

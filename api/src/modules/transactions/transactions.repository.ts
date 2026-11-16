@@ -1,4 +1,11 @@
-import { TransactionModel, type Direction, type TransactionDocument } from '../../db/models/transaction.model.js';
+import {
+  TransactionModel,
+  type Direction,
+  type ReviewStatus,
+  type TransactionDocument,
+} from '../../db/models/transaction.model.js';
+import type { Category } from './categories.js';
+import type { ListCursor } from './cursor.js';
 
 export interface NewTransactionInput {
   organisationId: string;
@@ -66,6 +73,64 @@ export function findByReference(
 
 export function findById(organisationId: string, transactionId: string): Promise<TransactionDocument | null> {
   return TransactionModel.findOne({ organisationId, _id: transactionId }).lean();
+}
+
+export interface TransactionListFilters {
+  accountId?: string;
+  direction?: Direction;
+  category?: Category;
+  from?: Date;
+  to?: Date;
+  minAmountKobo?: bigint;
+  maxAmountKobo?: bigint;
+  reviewStatus?: ReviewStatus;
+  q?: string;
+  cursor?: ListCursor;
+  limit: number;
+}
+
+export async function listTransactions(
+  organisationId: string,
+  filters: TransactionListFilters,
+): Promise<{ transactions: TransactionDocument[]; hasMore: boolean }> {
+  const filter: Record<string, unknown> = { organisationId };
+  if (filters.accountId) filter.accountId = filters.accountId;
+  if (filters.direction) filter.direction = filters.direction;
+  if (filters.category) filter['category.value'] = filters.category;
+  if (filters.reviewStatus) filter.reviewStatus = filters.reviewStatus;
+
+  if (filters.from || filters.to) {
+    const dateRange: Record<string, Date> = {};
+    if (filters.from) dateRange.$gte = filters.from;
+    if (filters.to) dateRange.$lte = filters.to;
+    filter.date = dateRange;
+  }
+
+  if (filters.minAmountKobo !== undefined || filters.maxAmountKobo !== undefined) {
+    const amountRange: Record<string, bigint> = {};
+    if (filters.minAmountKobo !== undefined) amountRange.$gte = filters.minAmountKobo;
+    if (filters.maxAmountKobo !== undefined) amountRange.$lte = filters.maxAmountKobo;
+    filter.amountKobo = amountRange;
+  }
+
+  if (filters.q) filter.$text = { $search: filters.q };
+
+  // Keyset pagination: "strictly before the last row of the previous page",
+  // on the same (date desc, _id desc) order the results are sorted by.
+  if (filters.cursor) {
+    filter.$or = [
+      { date: { $lt: filters.cursor.date } },
+      { date: filters.cursor.date, _id: { $lt: filters.cursor.id } },
+    ];
+  }
+
+  const docs = await TransactionModel.find(filter)
+    .sort({ date: -1, _id: -1 })
+    .limit(filters.limit + 1)
+    .lean();
+
+  const hasMore = docs.length > filters.limit;
+  return { transactions: hasMore ? docs.slice(0, filters.limit) : docs, hasMore };
 }
 
 export interface BatchInsertOutcome {

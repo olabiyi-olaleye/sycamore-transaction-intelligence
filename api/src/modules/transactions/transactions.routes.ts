@@ -1,7 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import { requireOrganisationId } from '../../http/requestContext.js';
-import { batchEnvelopeSchema, importTransactionSchema } from './transactions.schema.js';
-import { importBatch, importTransaction } from './transactions.service.js';
+import { batchEnvelopeSchema, importTransactionSchema, listTransactionsQuerySchema } from './transactions.schema.js';
+import { getTransactionDetail, importBatch, importTransaction, listTransactionsView } from './transactions.service.js';
 
 export function transactionsRoutes(app: FastifyInstance): void {
   app.post('/transactions', async (request, reply) => {
@@ -16,5 +16,19 @@ export function transactionsRoutes(app: FastifyInstance): void {
     const body = batchEnvelopeSchema.parse(request.body);
     const result = await importBatch(organisationId, body.transactions);
     reply.code(200).send(result);
+  });
+
+  app.get('/transactions', async (request, reply) => {
+    const organisationId = requireOrganisationId();
+    const query = listTransactionsQuerySchema.parse(request.query);
+    const result = await listTransactionsView(organisationId, query);
+    reply.send(result);
+  });
+
+  app.get('/transactions/:id', async (request, reply) => {
+    const organisationId = requireOrganisationId();
+    const { id } = request.params as { id: string };
+    const detail = await getTransactionDetail(organisationId, id);
+    reply.send(detail);
   });
 }

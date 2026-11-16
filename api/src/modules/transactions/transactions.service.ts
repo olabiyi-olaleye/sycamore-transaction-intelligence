@@ -1,14 +1,22 @@
+import mongoose from 'mongoose';
 import { findAccountById } from '../accounts/accounts.repository.js';
 import { ConflictError, NotFoundError } from '../../http/errors.js';
-import { formatKoboAsAmount, parseAmountToKobo } from '../../money/money.js';
+import { formatKoboAsAmount, parseAmountToKobo, parseFilterAmountToKobo } from '../../money/money.js';
 import type { TransactionDocument } from '../../db/models/transaction.model.js';
+import { decodeCursor, encodeCursor } from './cursor.js';
 import {
+  findById,
   findByReference,
   insertManyTransactions,
   insertTransaction,
+  listTransactions as listTransactionsRepo,
   type NewTransactionInput,
 } from './transactions.repository.js';
-import { importTransactionSchema, type ImportTransactionInput } from './transactions.schema.js';
+import {
+  importTransactionSchema,
+  type ImportTransactionInput,
+  type ListTransactionsQuery,
+} from './transactions.schema.js';
 
 export interface TransactionView {
   id: string;
@@ -174,4 +182,54 @@ export async function importBatch(organisationId: string, rawRows: unknown[]): P
   }
 
   return { results, summary };
+}
+
+export interface TransactionListView {
+  transactions: TransactionView[];
+  nextCursor: string | null;
+}
+
+export async function listTransactionsView(
+  organisationId: string,
+  query: ListTransactionsQuery,
+): Promise<TransactionListView> {
+  const cursor = query.cursor ? decodeCursor(query.cursor) : undefined;
+  const minAmountKobo = query.minAmount !== undefined ? parseFilterAmountToKobo(query.minAmount) : undefined;
+  const maxAmountKobo = query.maxAmount !== undefined ? parseFilterAmountToKobo(query.maxAmount) : undefined;
+
+  const { transactions, hasMore } = await listTransactionsRepo(organisationId, {
+    accountId: query.accountId,
+    direction: query.direction,
+    category: query.category,
+    from: query.from,
+    to: query.to,
+    minAmountKobo,
+    maxAmountKobo,
+    reviewStatus: query.reviewStatus,
+    q: query.q,
+    cursor,
+    limit: query.limit,
+  });
+
+  const last = transactions[transactions.length - 1];
+  const nextCursor = hasMore && last ? encodeCursor({ date: last.date, id: last._id.toString() }) : null;
+
+  return { transactions: transactions.map(toView), nextCursor };
+}
+
+export interface TransactionDetailView extends TransactionView {
+  // Populated once the classification and review modules exist (stages 5-6).
+  classificationHistory: unknown[];
+  flags: unknown[];
+}
+
+export async function getTransactionDetail(organisationId: string, transactionId: string): Promise<TransactionDetailView> {
+  if (!mongoose.isValidObjectId(transactionId)) {
+    throw new NotFoundError('Transaction not found');
+  }
+  const transaction = await findById(organisationId, transactionId);
+  if (!transaction) {
+    throw new NotFoundError('Transaction not found');
+  }
+  return { ...toView(transaction), classificationHistory: [], flags: [] };
 }

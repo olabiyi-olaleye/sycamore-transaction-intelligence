@@ -1,8 +1,16 @@
 import argon2 from 'argon2';
 import { randomUUID } from 'node:crypto';
+import { Types } from 'mongoose';
 import { AccountModel, type AccountDocument } from '../src/db/models/account.model.js';
 import { OrganisationModel, type OrganisationDocument } from '../src/db/models/organisation.model.js';
+import {
+  TransactionModel,
+  type Direction,
+  type ReviewStatus,
+  type TransactionDocument,
+} from '../src/db/models/transaction.model.js';
 import { UserModel, type UserDocument, type UserRole } from '../src/db/models/user.model.js';
+import type { Category } from '../src/modules/transactions/categories.js';
 
 // Shared test fixtures. Every email/externalReference is suffixed with a
 // fresh UUID so repeated test runs against the same persistent database never
@@ -26,6 +34,42 @@ export async function createUser(
     passwordHash,
     name: options.name ?? 'Test User',
     role: options.role ?? 'member',
+  });
+}
+
+export interface TransactionFixtureOverrides {
+  accountId: string;
+  externalReference?: string;
+  amountKobo: bigint;
+  direction: Direction;
+  narration?: string;
+  merchant?: string | null;
+  date: Date;
+  category?: { value: Category; source: 'rule' | 'ai' | 'human'; confidence: number } | null;
+  reviewStatus?: ReviewStatus;
+  classificationStatus?: 'pending' | 'processing' | 'classified' | 'failed';
+}
+
+// Bypasses the import endpoint: seeds rows directly so read-API tests can
+// control dates/categories/amounts precisely without going through
+// classification.
+export function createTransaction(
+  organisationId: string,
+  overrides: TransactionFixtureOverrides,
+): Promise<TransactionDocument> {
+  return TransactionModel.create({
+    organisationId,
+    accountId: overrides.accountId,
+    externalReference: overrides.externalReference ?? `fixture-${randomUUID()}`,
+    amountKobo: overrides.amountKobo,
+    direction: overrides.direction,
+    currency: 'NGN',
+    narration: overrides.narration ?? 'Fixture transaction',
+    merchant: overrides.merchant ?? null,
+    date: overrides.date,
+    category: overrides.category ? { ...overrides.category, eventId: new Types.ObjectId() } : null,
+    classification: { status: overrides.classificationStatus ?? 'pending', attempts: 0, nextAttemptAt: new Date(), lockedUntil: null, lastError: null },
+    reviewStatus: overrides.reviewStatus ?? 'none',
   });
 }
 

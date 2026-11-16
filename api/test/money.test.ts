@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { formatKoboAsAmount, formatNaira, parseAmountToKobo } from '../src/money/money.js';
+import { formatKoboAsAmount, formatNaira, parseAmountToKobo, parseFilterAmountToKobo } from '../src/money/money.js';
 
 describe('parseAmountToKobo', () => {
   it('parses a whole naira amount', () => {
@@ -40,6 +40,18 @@ describe('parseAmountToKobo', () => {
     expect(kobo).toBe(9007199254740999n);
     expect(kobo > BigInt(Number.MAX_SAFE_INTEGER)).toBe(true);
     expect(formatKoboAsAmount(kobo)).toBe(hugeAmount);
+  });
+});
+
+describe('parseFilterAmountToKobo', () => {
+  it('allows zero, unlike parseAmountToKobo', () => {
+    expect(parseFilterAmountToKobo('0')).toBe(0n);
+    expect(parseFilterAmountToKobo('0.00')).toBe(0n);
+  });
+
+  it('still rejects a negative or malformed value', () => {
+    expect(() => parseFilterAmountToKobo('-1')).toThrow();
+    expect(() => parseFilterAmountToKobo('1.234')).toThrow();
   });
 });
 

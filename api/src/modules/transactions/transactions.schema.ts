@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { AMOUNT_PATTERN, parseAmountToKobo } from '../../money/money.js';
+import { CATEGORIES } from './categories.js';
 
 // The only place outside money.ts that even mentions amount parsing, and it
 // only calls parseAmountToKobo to validate — it never does arithmetic on the
@@ -42,3 +43,21 @@ export type ImportTransactionInput = z.infer<typeof importTransactionSchema>;
 export const batchEnvelopeSchema = z.object({
   transactions: z.array(z.unknown()).min(1, 'a batch must contain at least one row').max(1000, 'a batch may contain at most 1000 rows'),
 });
+
+const filterAmountSchema = z.string().regex(AMOUNT_PATTERN, 'must match ^\\d+(\\.\\d{1,2})?$');
+
+export const listTransactionsQuerySchema = z.object({
+  cursor: z.string().optional(),
+  limit: z.coerce.number().int().min(1).max(200).default(50),
+  accountId: z.string().optional(),
+  direction: z.enum(['credit', 'debit']).optional(),
+  category: z.enum(CATEGORIES).optional(),
+  from: z.coerce.date().optional(),
+  to: z.coerce.date().optional(),
+  minAmount: filterAmountSchema.optional(),
+  maxAmount: filterAmountSchema.optional(),
+  reviewStatus: z.enum(['none', 'open', 'resolved']).optional(),
+  q: z.string().min(1).optional(),
+});
+
+export type ListTransactionsQuery = z.infer<typeof listTransactionsQuerySchema>;
