@@ -5,6 +5,9 @@ import { config } from '../config/env.js';
 import { registerErrorHandler } from './errorHandler.js';
 import { runWithRequestContext } from './requestContext.js';
 import { healthRoutes } from './health.routes.js';
+import { authHook } from './authHook.js';
+import { authRoutes, meRoutes } from '../modules/auth/auth.routes.js';
+import { accountsRoutes } from '../modules/accounts/accounts.routes.js';
 
 export function buildApp(): FastifyInstance {
   const app = Fastify({
@@ -27,6 +30,21 @@ export function buildApp(): FastifyInstance {
   app.register(cors, { origin: true });
   registerErrorHandler(app);
   app.register(healthRoutes);
+
+  // Public: no bearer token required.
+  app.register(authRoutes, { prefix: '/api/v1' });
+
+  // Protected: the auth hook is added inside this encapsulated child
+  // instance, so it applies only to routes registered within it, not to the
+  // public routes above or /health.
+  app.register(
+    async (protectedApp) => {
+      protectedApp.addHook('onRequest', authHook);
+      protectedApp.register(meRoutes);
+      protectedApp.register(accountsRoutes);
+    },
+    { prefix: '/api/v1' },
+  );
 
   return app;
 }
