@@ -9,8 +9,8 @@ import { login } from './auth.service.js';
 // Public: no auth hook runs ahead of this route (see app.ts registration).
 export function authRoutes(app: FastifyInstance): void {
   app.post('/auth/login', async (request, reply) => {
-    checkLoginRateLimit(request.ip);
     const body = loginSchema.parse(request.body);
+    checkLoginRateLimit(`${request.ip}:${body.email}`);
     const result = await login(body.email, body.password);
     reply.code(200).send(result);
   });

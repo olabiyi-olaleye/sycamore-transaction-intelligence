@@ -9,6 +9,9 @@ const MAX_ATTEMPTS = 5;
 
 const attempts = new Map<string, { count: number; windowStart: number }>();
 
+// Keyed on ip+email, not ip alone, so one noisy or shared IP (an office NAT,
+// a test suite) cannot lock out logins for every account behind it — it
+// still caps credential-stuffing attempts against any one account.
 export function checkLoginRateLimit(key: string): void {
   const now = Date.now();
   const entry = attempts.get(key);
@@ -20,8 +23,4 @@ export function checkLoginRateLimit(key: string): void {
   if (entry.count > MAX_ATTEMPTS) {
     throw new RateLimitedError('Too many login attempts. Try again later.');
   }
-}
-
-export function resetLoginRateLimit(key: string): void {
-  attempts.delete(key);
 }

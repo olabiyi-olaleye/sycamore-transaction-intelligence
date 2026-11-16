@@ -8,6 +8,7 @@ import { healthRoutes } from './health.routes.js';
 import { authHook } from './authHook.js';
 import { authRoutes, meRoutes } from '../modules/auth/auth.routes.js';
 import { accountsRoutes } from '../modules/accounts/accounts.routes.js';
+import { transactionsRoutes } from '../modules/transactions/transactions.routes.js';
 
 export function buildApp(): FastifyInstance {
   const app = Fastify({
@@ -42,6 +43,7 @@ export function buildApp(): FastifyInstance {
       protectedApp.addHook('onRequest', authHook);
       protectedApp.register(meRoutes);
       protectedApp.register(accountsRoutes);
+      protectedApp.register(transactionsRoutes);
     },
     { prefix: '/api/v1' },
   );

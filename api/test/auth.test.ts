@@ -1,7 +1,6 @@
 import { beforeAll, describe, expect, it } from 'vitest';
 import { buildApp } from '../src/http/app.js';
 import { createOrganisation, createUser, uniqueEmail } from './fixtures.js';
-import { resetLoginRateLimit } from '../src/http/rateLimit.js';
 
 describe('POST /api/v1/auth/login', () => {
   const password = 'correct-horse-battery-staple';
@@ -28,7 +27,6 @@ describe('POST /api/v1/auth/login', () => {
   });
 
   it('rejects the wrong password with the same message as an unknown email', async () => {
-    resetLoginRateLimit('127.0.0.1');
     const app = buildApp();
 
     const wrongPassword = await app.inject({
