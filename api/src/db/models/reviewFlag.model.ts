@@ -36,8 +36,8 @@ const reviewFlagSchema = new Schema<ReviewFlagDocument>(
   { timestamps: true, collection: 'review_flags' },
 );
 
-// One flag per (transaction, type): this is what makes a detector idempotent
-// — running it again over an already-flagged transaction just hits E11000.
+// One flag per (transaction, type), so a detector that fires twice on the
+// same transaction just hits a duplicate-key error the second time.
 reviewFlagSchema.index({ transactionId: 1, type: 1 }, { unique: true });
 reviewFlagSchema.index({ organisationId: 1, status: 1, createdAt: -1 });
 reviewFlagSchema.plugin(tenantScopePlugin);

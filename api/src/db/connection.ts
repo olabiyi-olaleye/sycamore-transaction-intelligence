@@ -3,9 +3,8 @@ import { config } from '../config/env.js';
 
 let connected = false;
 
-// useBigInt64 makes the driver deserialise BSON Long as native bigint instead
-// of the mongodb.Long wrapper object, so amountKobo round-trips as bigint with
-// no manual conversion at the call site.
+// useBigInt64 makes amountKobo come back as a plain bigint instead of the
+// mongodb.Long wrapper object.
 export async function connectDb(): Promise<typeof mongoose> {
   if (connected) {
     return mongoose;

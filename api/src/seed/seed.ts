@@ -8,12 +8,10 @@ import { importBatch } from '../modules/transactions/transactions.service.js';
 import { SEED_ORGANISATIONS } from './data.js';
 import { generateSeedRows } from './generateTransactions.js';
 
-// Idempotent: organisations and users are upserted on a natural key (name,
-// email) with $setOnInsert, so re-running never duplicates or overwrites
-// them. Transactions go through the real import service
-// (transactions.service.ts's importBatch), so re-running reports every row
-// as a duplicate instead of creating anything new — the same guarantee the
-// API gives any client that resends a batch.
+// Organisations and users are upserted on a natural key (name, email) with
+// $setOnInsert, so re-running never duplicates them. Transactions go through
+// the real import service (importBatch), so a re-run just reports every row
+// as a duplicate — same as any client resending a batch.
 async function main(): Promise<void> {
   await connectDb();
   const passwordHash = await argon2.hash(config.SEED_PASSWORD);

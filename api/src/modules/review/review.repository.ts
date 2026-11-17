@@ -101,8 +101,9 @@ export function countOpenFlags(organisationId: string): Promise<number> {
   return ReviewFlagModel.countDocuments({ organisationId, status: 'open' });
 }
 
-/** Organisations are not a module of their own in this app (see BUILD_PLAN.md); this is
- * the one setting review detectors need, so it lives next to the detector that reads it. */
+/** There's no dedicated organisations module here, and this is the only
+ * setting review detectors need from one, so it lives next to the detector
+ * that reads it rather than in a module of its own. */
 export async function getLargePaymentMultiple(organisationId: string): Promise<number> {
   const org = await OrganisationModel.findById(organisationId).lean();
   return org?.settings.largePaymentMultiple ?? 5;

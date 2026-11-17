@@ -1,17 +1,15 @@
 import { RateLimitedError } from './errors.js';
 
-// In-memory and per-process: fine for a single-node prototype, not for a
-// horizontally scaled deployment (each instance would have its own counter).
-// A real deployment would move this to a shared store (Redis) keyed the same
-// way. Noted in the README as a known limitation.
+// In-memory, per-process — fine for one instance, but a horizontally scaled
+// deployment would need this in Redis instead, since each instance would
+// otherwise have its own counter.
 const WINDOW_MS = 15 * 60 * 1000;
 const MAX_ATTEMPTS = 5;
 
 const attempts = new Map<string, { count: number; windowStart: number }>();
 
-// Keyed on ip+email, not ip alone, so one noisy or shared IP (an office NAT,
-// a test suite) cannot lock out logins for every account behind it — it
-// still caps credential-stuffing attempts against any one account.
+// Keyed on ip+email rather than ip alone, so a shared IP (an office NAT) can't
+// get every account behind it locked out by attempts against one of them.
 export function checkLoginRateLimit(key: string): void {
   const now = Date.now();
   const entry = attempts.get(key);

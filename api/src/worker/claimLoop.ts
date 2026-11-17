@@ -11,9 +11,8 @@ function sleep(ms: number, signal: AbortSignal): Promise<void> {
   });
 }
 
-// Claims one transaction per iteration and only backs off when the queue is
-// empty, so a backlog drains as fast as the provider allows instead of
-// waiting out a fixed poll interval between every row.
+// Only sleeps when the queue is actually empty, so a backlog drains at
+// provider speed instead of one row per poll interval.
 export async function runClaimLoop(signal: AbortSignal): Promise<void> {
   while (!signal.aborted) {
     const outcome = await processOneClaimedTransaction();

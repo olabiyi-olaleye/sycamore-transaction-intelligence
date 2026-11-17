@@ -5,15 +5,14 @@ interface SpendingBarsProps {
   rows: Array<{ category: string; total: string }>;
 }
 
-// Horizontal bars built with plain CSS, per the design system — no chart library.
+// Plain CSS bars, no chart library.
 export function SpendingBars({ rows }: SpendingBarsProps) {
   if (rows.length === 0) {
     return <p className="micro-label">No categorised spending in this period yet</p>;
   }
 
-  // Bar width is the only place a total is compared by magnitude, and the
-  // comparison itself is bigint (parseKoboForComparison), not float — only
-  // the final 0-100 percentage, an exact small integer, becomes a number.
+  // Compares totals in bigint (parseKoboForComparison); only the resulting
+  // 0-100 percentage becomes a JS number, for the CSS width.
   const magnitudes = rows.map((row) => parseKoboForComparison(row.total));
   const max = magnitudes.reduce((largest, value) => (value > largest ? value : largest), 1n);
 

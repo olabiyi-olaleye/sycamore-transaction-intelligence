@@ -1,6 +1,5 @@
-// Populates process.env from api/.env for local, non-Docker development. Never
-// overrides a variable already set (docker-compose.yml passes real env vars
-// directly, so this is a no-op in containers).
+// Loads api/.env for local dev. Doesn't override vars already set, so this
+// is a no-op in Docker (docker-compose.yml passes env vars directly).
 import 'dotenv/config';
 import { z } from 'zod';
 
@@ -20,8 +19,6 @@ const schema = z.object({
 
 export type Config = Readonly<z.infer<typeof schema>>;
 
-// Parsed once per process. A worker and the API both call this with the same
-// env, so there is one source of truth for "is this deployment configured correctly".
 function loadConfig(): Config {
   const result = schema.safeParse(process.env);
   if (!result.success) {

@@ -71,9 +71,7 @@ const transactionSchema = new Schema<TransactionDocument>(
     organisationId: { type: Schema.Types.ObjectId, required: true, ref: 'Organisation' },
     accountId: { type: Schema.Types.ObjectId, required: true, ref: 'Account' },
     externalReference: { type: String, required: true },
-    // Stored as BSON Long, read back as native bigint (see db/connection.ts
-    // useBigInt64) so this never round-trips through a float.
-    amountKobo: { type: Schema.Types.BigInt, required: true },
+    amountKobo: { type: Schema.Types.BigInt, required: true }, // BSON Long, see db/connection.ts
     direction: { type: String, enum: ['credit', 'debit'], required: true },
     currency: { type: String, enum: ['NGN'], required: true, default: 'NGN' },
     narration: { type: String, required: true },
@@ -86,9 +84,9 @@ const transactionSchema = new Schema<TransactionDocument>(
   { timestamps: true, collection: 'transactions' },
 );
 
-// Idempotency: this is the only thing that decides a duplicate import. The
-// import path always attempts an insert and reacts to the E11000 this throws
-// rather than checking existence first (see transactions.service.ts).
+// This is what actually decides a duplicate import — transactions.service.ts
+// always attempts the insert and reacts to the E11000 this throws, rather
+// than checking existence first.
 transactionSchema.index({ organisationId: 1, accountId: 1, externalReference: 1 }, { unique: true });
 transactionSchema.index({ organisationId: 1, date: -1, _id: -1 });
 transactionSchema.index({ organisationId: 1, accountId: 1, date: -1, _id: -1 });

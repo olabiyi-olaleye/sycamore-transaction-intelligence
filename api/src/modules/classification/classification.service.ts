@@ -18,18 +18,16 @@ import {
 import { resolveOpenFlagsForTransaction } from '../review/review.repository.js';
 import type { Category } from '../transactions/categories.js';
 
-// "Automatic categorisation failed after 5 attempts" (build plan's
-// CLASSIFICATION_FAILED example) fixes this at 5.
 const MAX_ATTEMPTS = 5;
 const PROVIDER_TIMEOUT_MS = 5000;
 const BASE_BACKOFF_MS = 2000;
 const MAX_BACKOFF_MS = 60_000;
 const LOW_CONFIDENCE_THRESHOLD = 0.6;
 
-// Circuit breaker: after this many consecutive LLM failures, skip calling
-// the provider for a cool-off and reschedule immediately instead — rules
-// keep running throughout. In-memory and process-global: correct for a
-// single worker process, and the first thing cut if time runs short.
+// After this many consecutive LLM failures, skip calling the provider for a
+// cool-off and reschedule immediately instead; rules keep running the whole
+// time. In-memory and per-process, so this only works for a single worker —
+// a multi-worker deployment would need to share this state (e.g. in Redis).
 const CIRCUIT_BREAKER_THRESHOLD = 5;
 const CIRCUIT_BREAKER_COOLOFF_MS = 30_000;
 

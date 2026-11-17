@@ -19,8 +19,8 @@ export interface ClassificationEventDocument {
   createdAt: Date;
 }
 
-// Append-only: the repository (classification.repository.ts) exposes insert
-// and read only. A correction adds a new event; it never edits one.
+// Append-only — classification.repository.ts only exposes insert and read.
+// A correction adds a new event here rather than editing an old one.
 const classificationEventSchema = new Schema<ClassificationEventDocument>(
   {
     organisationId: { type: Schema.Types.ObjectId, required: true, ref: 'Organisation' },

@@ -24,14 +24,11 @@ const userSchema = new Schema<UserDocument>(
   { timestamps: true, collection: 'users' },
 );
 
-// Deliberately not wrapped with tenantScopePlugin. Every other tenant
-// collection is only ever read after organisationId is already known from a
-// verified token, but logging in is the one place that has to look a user up
-// by email alone, before their organisationId is known — that is the exact
-// query the plugin exists to forbid. The design allows exactly one
-// documented bypass (the worker's claim query), so rather than add a second
-// one here,
-// this collection goes without the plugin; every other read of it still
-// takes organisationId as an explicit filter at the call site (see
-// auth.repository.ts findUserById) as defence in depth.
+// Not wrapped with tenantScopePlugin, unlike every other tenant collection:
+// logging in means finding a user by email alone, before organisationId is
+// even known, which is the exact kind of query the plugin forbids. The
+// worker's claim query is already the one documented bypass, so this skips
+// the plugin entirely instead of adding a second one. Every other read of
+// this collection (see auth.repository.ts's findUserById) still filters by
+// organisationId explicitly at the call site.
 export const UserModel = model<UserDocument>('User', userSchema);

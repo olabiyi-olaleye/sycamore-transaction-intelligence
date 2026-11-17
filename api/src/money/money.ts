@@ -1,12 +1,10 @@
-// The only module that converts between a decimal amount and kobo. Nothing
-// else in the app may call parseFloat, Number(), or multiply/divide an amount
-// by 100 — every other module moves amountKobo around as a bigint.
+// All decimal-to-kobo conversion lives here. Everywhere else just moves
+// amountKobo around as a bigint; no parseFloat, no Number(), no *100.
 
 export const AMOUNT_PATTERN = /^\d+(\.\d{1,2})?$/;
 
-// Splits on the decimal point and pads the fraction to two digits, combining
-// with bigint multiplication so a value above Number.MAX_SAFE_INTEGER never
-// touches a float. The pattern already forbids a sign, so this is always >= 0.
+// Splits on the decimal point and pads the fraction, so even a value above
+// Number.MAX_SAFE_INTEGER never passes through a float.
 function parseAmountPatternToKobo(amount: string): bigint {
   if (!AMOUNT_PATTERN.test(amount)) {
     throw new Error(`"${amount}" is not a valid decimal amount`);

@@ -65,10 +65,9 @@ export function listEventsForTransaction(
   return ClassificationEventModel.find({ organisationId, transactionId }).sort({ createdAt: 1 }).lean();
 }
 
-// Every transition below takes organisationId as the first argument and
-// filters by it even though the worker already knows it from the claimed
-// document — the claim query is the only query in this module allowed to
-// skip that.
+// These all take organisationId and filter by it, even though the worker
+// already has it from the document it just claimed. Only the claim query
+// itself skips that.
 
 export async function markClassified(
   organisationId: string,
@@ -118,10 +117,10 @@ export async function markFailed(organisationId: string, transactionId: string, 
 
 /**
  * A human correction: one classification_events insert plus one transaction
- * update, in a single multi-document transaction (needs the replica set
- * stage 1 set up). Also moves classification.status to 'classified' — a
- * transaction a human has just categorised must stop being eligible for the
- * worker to claim and overwrite with a rule/AI guess.
+ * update, in a single multi-document transaction (needs Mongo running as a
+ * replica set). Also moves classification.status to 'classified', since a
+ * transaction a human just categorised shouldn't be eligible for the worker
+ * to claim and overwrite with a rule/AI guess.
  */
 export async function applyCorrection(
   organisationId: string,

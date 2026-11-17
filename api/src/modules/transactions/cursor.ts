@@ -1,9 +1,8 @@
 import { Buffer } from 'node:buffer';
 import { ValidationError } from '../../http/errors.js';
 
-// Keyset pagination on (date, _id), opaque to the client. Never a `skip` —
-// that degrades linearly with offset and millions of transactions is exactly
-// the scale this is meant to survive.
+// Keyset pagination on (date, _id), opaque to the client — no `skip`, which
+// gets slower the deeper you page.
 export interface ListCursor {
   date: Date;
   id: string;

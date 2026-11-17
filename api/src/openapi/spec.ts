@@ -1,8 +1,7 @@
-// Hand-maintained rather than generated from the Zod schemas: the routes
-// call schema.parse() directly instead of passing schemas through Fastify's
-// own validation/serialization (see transactions.routes.ts etc.), so there
-// is no automatic schema -> OpenAPI pipeline wired up. Keep this in sync with
-// the schemas in each module's *.schema.ts when either one changes.
+// Hand-maintained, not generated — routes call schema.parse() directly
+// rather than going through Fastify's own validation, so there's no
+// automatic pipeline from the Zod schemas to this file. Update both when
+// either one changes.
 
 const errorResponse = {
   type: 'object',

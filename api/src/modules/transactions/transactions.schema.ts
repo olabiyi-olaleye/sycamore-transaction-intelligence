@@ -2,9 +2,8 @@ import { z } from 'zod';
 import { AMOUNT_PATTERN, parseAmountToKobo } from '../../money/money.js';
 import { CATEGORIES } from './categories.js';
 
-// The only place outside money.ts that even mentions amount parsing, and it
-// only calls parseAmountToKobo to validate — it never does arithmetic on the
-// string itself.
+// Only calls parseAmountToKobo to validate, never to do arithmetic — the
+// parsing itself stays in money.ts.
 export const amountSchema = z
   .string({
     error:
@@ -36,10 +35,9 @@ export const importTransactionSchema = z.object({
 
 export type ImportTransactionInput = z.infer<typeof importTransactionSchema>;
 
-// Deliberately loose: the envelope just needs to be an array of plausible
-// size. Each row is validated individually inside transactions.service.ts so
-// one malformed row becomes a per-row "failed" result, not a 400 for the
-// whole batch.
+// Just checks the envelope is an array of a plausible size. Rows are
+// validated one at a time in transactions.service.ts, so a bad row shows up
+// as that row's own "failed" result instead of a 400 for the whole batch.
 export const batchEnvelopeSchema = z.object({
   transactions: z.array(z.unknown()).min(1, 'a batch must contain at least one row').max(1000, 'a batch may contain at most 1000 rows'),
 });

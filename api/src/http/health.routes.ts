@@ -1,8 +1,9 @@
 import type { FastifyInstance } from 'fastify';
 import mongoose from 'mongoose';
 
-// Pending backlog is added once the transaction model exists (stage 5); for
-// now this proves the API process and the database connection are both up.
+// TODO: also report the pending-classification backlog size here once
+// there's an easy way to query it without importing the whole classification
+// module into the health check.
 export function healthRoutes(app: FastifyInstance): void {
   app.get('/health', async (_request, reply) => {
     const dbConnected = mongoose.connection.readyState === 1;

@@ -12,8 +12,8 @@ export interface OrganisationDocument {
   updatedAt: Date;
 }
 
-// The tenant root. Not itself organisationId-scoped — there is nothing above
-// it to scope against — so the tenant-guard plugin does not apply here.
+// This is the tenant root, so there's no organisationId to scope it by —
+// the tenant-guard plugin doesn't apply here.
 const organisationSchema = new Schema<OrganisationDocument>(
   {
     name: { type: String, required: true },

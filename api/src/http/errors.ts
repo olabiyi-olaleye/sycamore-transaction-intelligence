@@ -1,5 +1,4 @@
-// Typed application errors. The global error handler (errorHandler.ts) is the
-// only place that turns these into HTTP responses.
+// errorHandler.ts is the only place these turn into an HTTP response.
 export abstract class AppError extends Error {
   abstract readonly statusCode: number;
   abstract readonly code: string;

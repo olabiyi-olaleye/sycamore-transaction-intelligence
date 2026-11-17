@@ -1,7 +1,7 @@
 import type { Schema } from 'mongoose';
 
-// Mongoose query middleware names that can read or write a tenant collection
-// without going through 'save' or 'aggregate'.
+// Every query middleware name that can touch a tenant collection outside of
+// 'save' and 'aggregate'.
 const QUERY_HOOKS = [
   'countDocuments',
   'deleteMany',
@@ -18,11 +18,9 @@ const QUERY_HOOKS = [
   'updateOne',
 ];
 
-// The worker's claim query is the only place in the app that legitimately
-// queries a tenant collection across every organisation at once (it has to:
-// it is looking for whichever organisation's transaction is due next). It
-// opts out with `.setOptions({ [TENANT_GUARD_BYPASS]: true })`, commented at
-// the call site. Nothing else may use this.
+// Only the worker's claim query uses this (it has to search across every
+// organisation for whichever transaction is due next). Set via
+// `.setOptions({ [TENANT_GUARD_BYPASS]: true })`, commented at that call site.
 export const TENANT_GUARD_BYPASS = 'bypassTenantGuard';
 
 interface QueryLike {

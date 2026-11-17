@@ -23,10 +23,8 @@ export function signAccessToken(payload: TokenPayload): string {
   return jwt.sign(payload, config.JWT_SECRET, { expiresIn: '1h' });
 }
 
-// organisationId is set here and nowhere else: it comes from the verified
-// token's claim, never from a body, query string, or path parameter. Scoped
-// to the protected route group in app.ts, so /auth/login, /health and /docs
-// never go through it.
+// organisationId comes from the verified token's claim here, and nowhere
+// else — never a body, query string, or path parameter.
 export function authHook(request: FastifyRequest, _reply: FastifyReply, done: (err?: Error) => void): void {
   const header = request.headers.authorization;
   if (!header?.startsWith('Bearer ')) {

@@ -10,9 +10,8 @@ interface Rule {
   direction?: Direction;
 }
 
-// Keyword/pattern rules over narration and merchant. A hit is accepted at
-// confidence 0.9 or above — high enough that it never needs the AI step, and
-// high enough to clear the LOW_CONFIDENCE detector's 0.6 threshold.
+// Confidence 0.9+ on every rule, comfortably above the 0.6 LOW_CONFIDENCE
+// threshold and high enough that a hit never needs the AI step at all.
 const RULES: Rule[] = [
   { pattern: /salary|payroll/i, category: 'PAYROLL', confidence: 0.95, reason: 'Narration mentions salary or payroll', direction: 'debit' },
   { pattern: /\bpaye\b/i, category: 'TAX', confidence: 0.95, reason: 'Narration mentions PAYE' },

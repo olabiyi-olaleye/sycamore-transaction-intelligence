@@ -23,8 +23,8 @@ export function getRequestContext(): RequestContext {
   return context;
 }
 
-// The one function tenant repositories call for organisationId. Throws rather
-// than returning undefined so a missing scope fails loudly, not silently.
+// Throws instead of returning undefined, so a missing organisationId is an
+// error at the point of use, not a silent null a repository forgets to check.
 export function requireOrganisationId(): string {
   const context = getRequestContext();
   if (!context.organisationId) {

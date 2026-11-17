@@ -4,10 +4,8 @@ import { RateLimitedProviderError, type ClassificationProvider, type ClassifyInp
 
 export type MockLlmMode = 'ok' | 'slow' | 'down' | 'rate_limited' | 'invalid';
 
-// Mutable at runtime (seeded from env) rather than read from the frozen
-// config object directly. An operator flips this with a real restart +
-// env change after an outage; tests flip it in-process to prove the backlog
-// drains once it does, without needing a second process.
+// Mutable rather than read straight from config, so tests (and, in a real
+// deployment, an admin endpoint) can flip the mode without a restart.
 let mode: MockLlmMode = config.MOCK_LLM_MODE;
 let failureRate: number = config.MOCK_LLM_FAILURE_RATE;
 
@@ -29,8 +27,8 @@ function delay(ms: number, signal: AbortSignal): Promise<void> {
   });
 }
 
-// Deterministic so the same narration always gets the same mock category —
-// useful for predictable tests — without a lookup table to maintain.
+// Quick deterministic hash so the mock doesn't need a lookup table but still
+// gives a repeatable category/confidence per input.
 function djb2(text: string): number {
   let hash = 5381;
   for (let i = 0; i < text.length; i += 1) {
@@ -42,14 +40,11 @@ function djb2(text: string): number {
 function pseudoClassify(input: ClassifyInput): ClassifyResult {
   const text = `${input.narration} ${input.merchant ?? ''}`.toLowerCase();
   const categoryHash = djb2(text);
-  // Hashed from a different input than categoryHash, not just different bits
-  // of it: real narrations are often "Payment to X for supplies" with a long
-  // shared template and a short varying merchant name, and djb2 does not mix
-  // a short suffix strongly into its low bits — confidence came out
-  // correlated with the template, clustering ~40-50% of seed data under 0.6
-  // instead of the intended ~22%. Hashing the merchant alone (the part that
-  // actually varies) decorrelates it; narrations with no merchant fall back
-  // to the full text.
+  // Hash the merchant alone for confidence, not the full narration: a lot of
+  // real narrations share a template ("Payment to X for supplies") with only
+  // the merchant varying, and hashing the whole string left confidence
+  // correlated with the template rather than spread out. Falls back to the
+  // full text when there's no merchant to hash.
   const confidenceHash = djb2(input.merchant ? input.merchant.toLowerCase() : text);
   const category = CATEGORIES[categoryHash % CATEGORIES.length] ?? 'OTHER';
   const confidence = 0.5 + (confidenceHash % 45) / 100; // spans 0.50-0.94, straddling the 0.6 LOW_CONFIDENCE threshold

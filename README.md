@@ -2,8 +2,7 @@
 
 A multi-tenant transaction import, AI-assisted categorisation, and human review platform
 for Nigerian businesses, built for the Sycamore Capital Group technical assessment
-(`docs/ASSESSMENT.md`). The brief and the stage-by-stage build plan I followed are in
-`docs/ASSESSMENT.md` and `docs/BUILD_PLAN.md`.
+(the brief is in `docs/ASSESSMENT.md`).
 
 I am not expected to have built a production-complete system in this time box. What follows
 explains what I built, why, and what I'd do differently with more time.
@@ -192,9 +191,8 @@ Worked example: **₦12,999.75**.
 5. Formatted back to `"12999.75"` by `formatKoboAsAmount`, again by string construction, not
    division.
 
-The one real bug this area produced (documented in full in `notes/WALKTHROUGH.md`'s stage 4
-section, since it's worth remembering): `Model.aggregate()` does **not** cast `$match`
-against the schema the way `Model.find()` does. Passing the plain string `organisationId`
+One real bug came out of this area, worth remembering: `Model.aggregate()` does **not** cast
+`$match` against the schema the way `Model.find()` does. Passing the plain string `organisationId`
 into an aggregation pipeline's `$match` compared it against a stored `ObjectId` and matched
 nothing — every dashboard total came back `0`, silently, for every organisation. Fixed with
 an explicit `new mongoose.Types.ObjectId(organisationId)` in `dashboard.repository.ts`.
@@ -228,7 +226,7 @@ Three layers, as specified:
   `organisationId` is known, which is exactly the query the plugin exists to forbid. Adding
   a second bypass for it would have contradicted the rule that there's only one. Every other
   read of `users` still takes `organisationId` as an explicit filter (defence in depth, just
-  without the Mongoose-level backstop). Full reasoning in `notes/WALKTHROUGH.md`, stage 2.
+  without the Mongoose-level backstop).
 
 A resource outside the caller's organisation always returns `404`, never `403` — tested for
 accounts, transactions, review flags, and corrections.
@@ -278,11 +276,10 @@ npm test -- test/classification.test.ts   # one file
 npm run typecheck
 ```
 
-Coverage follows the build plan's own list almost exactly (money, idempotency/concurrency,
-tenancy, every classification failure mode, audit, one positive/negative case per detector)
-— `notes/WALKTHROUGH.md` has a stage-by-stage breakdown of what each test file proves. The
-web app was verified by driving a real browser against the real stack rather than with a
-Vitest/RTL suite (see §10).
+Coverage maps closely onto what the brief calls out explicitly: money, idempotency and
+concurrency, tenancy, every classification failure mode, audit history, one positive and one
+negative case per detector. The web app was verified by driving a real browser against the
+real stack rather than with a Vitest/RTL suite (see §10).
 
 ## 8. Assumptions and trade-offs
 
@@ -291,7 +288,7 @@ Vitest/RTL suite (see §10).
   scope here.
 - **Roles are stored but not enforced.** `admin`/`member` exist on `User`, but no endpoint
   checks either — anyone authenticated in an organisation can import, correct, and resolve.
-  Flagged explicitly in the build plan as acceptable for this prototype.
+  A reasonable cut for a prototype at this scope; real role-gating would be next.
 - **Login rate limiting and the classification circuit breaker are in-memory,
   per-process.** Correct for one API/worker instance; a horizontally scaled deployment would
   need both moved to a shared store (Redis), as noted at each definition site.
@@ -363,13 +360,12 @@ and if it's just sitting there un-mined, that's the real process gap to close.
   the Zod schemas — `fastify-type-provider-zod` would close that gap but means every route's
   validation moving from an inline `.parse()` call to a schema on the route options.
 - No automated UI test suite; the web app was verified against the real stack in a browser
-  (see `notes/WALKTHROUGH.md`, stage 8) rather than with Playwright/RTL.
+  rather than with Playwright/RTL.
 - `minAmount`/`maxAmount` filters exist in the API but not the Transactions page's UI.
 - No role gating, no admin/invite endpoints, no CI pipeline config.
 - Login rate limiting and the classification circuit breaker are per-process; both are
   clearly marked at their definition site as the first things to move to a shared store in a
   multi-instance deployment.
 - `GET /health` reports database connectivity but not the pending-classification backlog
-  size in its body yet, despite `docs/BUILD_PLAN.md` asking for it — `pendingClassification
-  Count` is already computed for the dashboard and would be a small addition to wire the same
-  query into the health check.
+  size in its body yet — `pendingClassificationCount` is already computed for the dashboard
+  and would be a small addition to wire the same query into the health check.

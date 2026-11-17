@@ -1,13 +1,9 @@
-// The web app's one money-formatting module. Amounts arrive from the API as
-// decimal strings ("12999.75") and are only ever formatted as strings here —
-// never parsed with Number() or parseFloat, so there is nothing for a float
-// to round.
+// Amounts arrive from the API as decimal strings ("12999.75") and stay
+// strings everywhere here — no Number()/parseFloat.
 
-// For sizing a UI element (a spending bar) by relative magnitude only — never
-// for display or storage. Parses with the same split-on-decimal-point
-// approach as the server's money module, so the money value itself never
-// touches Number()/parseFloat; only the resulting small integer percentage
-// (0-100) is ever converted to a JS number, which is exact.
+// Only used to compare two amounts by size (for sizing a spending bar), not
+// for anything displayed or stored — still parsed by splitting the string,
+// same as the server side.
 export function parseKoboForComparison(amount: string): bigint {
   const negative = amount.startsWith('-');
   const unsigned = negative ? amount.slice(1) : amount;

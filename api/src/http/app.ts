@@ -25,9 +25,7 @@ export function buildApp(): FastifyInstance {
 
   app.addHook('onRequest', (request, reply, done) => {
     reply.header('x-request-id', request.id);
-    // Every log line and error response inside this request can read the
-    // request ID (and, once the auth hook runs, the caller's organisationId)
-    // without threading it through every function call.
+    // Opens the request context; authHook adds organisationId to it later.
     runWithRequestContext({ requestId: request.id }, () => done());
   });
 
@@ -39,9 +37,8 @@ export function buildApp(): FastifyInstance {
   // Public: no bearer token required.
   app.register(authRoutes, { prefix: '/api/v1' });
 
-  // Protected: the auth hook is added inside this encapsulated child
-  // instance, so it applies only to routes registered within it, not to the
-  // public routes above or /health.
+  // Protected routes: authHook is added on this encapsulated child instance,
+  // so it never runs for /auth/login, /health or /docs above.
   app.register(
     async (protectedApp) => {
       protectedApp.addHook('onRequest', authHook);

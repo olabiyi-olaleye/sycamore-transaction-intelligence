@@ -115,8 +115,8 @@ export async function listTransactions(
 
   if (filters.q) filter.$text = { $search: filters.q };
 
-  // Keyset pagination: "strictly before the last row of the previous page",
-  // on the same (date desc, _id desc) order the results are sorted by.
+  // Strictly before the last row of the previous page, in the same
+  // (date desc, _id desc) order the results are sorted by.
   if (filters.cursor) {
     filter.$or = [
       { date: { $lt: filters.cursor.date } },

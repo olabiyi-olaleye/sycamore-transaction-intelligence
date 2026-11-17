@@ -28,16 +28,14 @@ function dateMatch(range: DashboardRange): Record<string, Date> | undefined {
 }
 
 export async function summarize(organisationId: string, range: DashboardRange): Promise<DashboardTotals> {
-  // Unlike Model.find(), Model.aggregate() does not cast $match against the
-  // schema — a string here would never equal the stored ObjectId and every
-  // total would silently come back zero instead of erroring.
+  // Model.aggregate() doesn't cast $match against the schema like find()
+  // does, so a plain string here would never match the stored ObjectId.
   const match: Record<string, unknown> = { organisationId: new mongoose.Types.ObjectId(organisationId) };
   const dateFilter = dateMatch(range);
   if (dateFilter) match.date = dateFilter;
 
-  // $sum over a Long (amountKobo) field stays a 64-bit integer server-side;
-  // useBigInt64 on the driver is what brings it back as a JS bigint rather
-  // than silently widening to a double.
+  // $sum over amountKobo (a Long) stays a 64-bit integer on the server;
+  // useBigInt64 on the driver brings it back as bigint, not a double.
   const [totals] = await TransactionModel.aggregate([
     { $match: match },
     {

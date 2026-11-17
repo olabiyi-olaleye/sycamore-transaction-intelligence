@@ -36,9 +36,8 @@ function addDays(date: Date, days: number): string {
   return copy.toISOString().slice(0, 10);
 }
 
-// Deterministic pseudo-random jitter: the same seed key always produces the
-// same amount, so re-running the seed script is reproducible. Only used to
-// vary synthetic seed amounts, never to parse or process a real one.
+// Quick hash so the same seed key always jitters to the same amount — keeps
+// re-running the seed script reproducible without a random seed library.
 function djb2(text: string): number {
   let hash = 5381;
   for (let i = 0; i < text.length; i += 1) {
@@ -228,8 +227,8 @@ export function generateSeedRows(org: SeedOrganisation): SeedTransactionRow[] {
     });
   }
 
-  // Vague narrations the rules cannot decide: deliberately avoid every
-  // keyword in rules.ts so these fall through to the mock LLM.
+  // None of these match a rules.ts keyword on purpose, so they fall through
+  // to the mock LLM.
   const vagueNarrations = ['Payment ref 44719', 'Settlement batch XK-220', 'Misc disbursement', 'Value adjustment entry 7'];
   vagueNarrations.forEach((narration, index) => {
     rows.push({
@@ -243,8 +242,8 @@ export function generateSeedRows(org: SeedOrganisation): SeedTransactionRow[] {
     });
   });
 
-  // Planted: a duplicate payment pair (same amount, same account, different
-  // reference, a few hours apart) for the POSSIBLE_DUPLICATE detector.
+  // A duplicate payment pair for the POSSIBLE_DUPLICATE detector: same
+  // amount and account, different reference, a few hours apart.
   const duplicateSupplier = profile.suppliers[0]!;
   rows.push({
     accountSlug: operating.slug,
@@ -265,8 +264,8 @@ export function generateSeedRows(org: SeedOrganisation): SeedTransactionRow[] {
     date: '2024-02-14',
   });
 
-  // Planted: one unusually large debit, placed in March so the account
-  // already has well over 10 prior debits in its trailing 90 days.
+  // One unusually large debit for UNUSUALLY_LARGE, dated in March so the
+  // account already has well over 10 prior debits in its trailing 90 days.
   rows.push({
     accountSlug: operating.slug,
     externalReference: `${operating.slug}-large-emergency`,
