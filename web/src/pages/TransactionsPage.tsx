@@ -216,7 +216,7 @@ export function TransactionsPage() {
                     <td>{transaction.date.slice(0, 10)}</td>
                     <td>
                       {transaction.narration}
-                      {transaction.merchant ? ` — ${transaction.merchant}` : ''}
+                      {transaction.merchant ? ` · ${transaction.merchant}` : ''}
                     </td>
                     <td>
                       {transaction.category ? (

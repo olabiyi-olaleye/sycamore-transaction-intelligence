@@ -93,6 +93,6 @@ describe('login rate limiting', () => {
     const otherEmail = uniqueEmail('shared-ip-b');
     const response = await request(app).post('/api/v1/auth/login').send({ email: otherEmail, password: 'whatever' });
 
-    expect(response.status).toBe(401); // not 429 — a different account, not locked out by the first
+    expect(response.status).toBe(401); // not 429: a different account, not locked out by the first
   });
 });

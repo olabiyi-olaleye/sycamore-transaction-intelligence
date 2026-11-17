@@ -7,7 +7,7 @@ import { CATEGORIES } from '../constants/categories.js';
 export const amountSchema = z
   .string({
     error:
-      'amount must be a decimal string like "12999.75" — JSON numbers are rejected because money is only ever parsed as bigint kobo, never as a float',
+      'amount must be a decimal string like "12999.75". JSON numbers are rejected because money is only ever parsed as bigint kobo, never as a float',
   })
   .regex(AMOUNT_PATTERN, 'amount must match ^\\d+(\\.\\d{1,2})?$ (at most two decimal places, no sign)')
   .refine((value) => {
@@ -23,7 +23,7 @@ export const importTransactionSchema = z.object({
   externalReference: z.string().min(1, 'externalReference is required'),
   amount: amountSchema,
   direction: z.enum(['credit', 'debit']),
-  currency: z.literal('NGN', { error: 'currency must be "NGN" — this prototype only supports Nigerian Naira' }),
+  currency: z.literal('NGN', { error: 'currency must be "NGN"; this prototype only supports Nigerian Naira' }),
   narration: z.string().min(1, 'narration is required'),
   merchant: z
     .string()

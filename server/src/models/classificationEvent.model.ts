@@ -19,7 +19,7 @@ export interface ClassificationEventDocument {
   createdAt: Date;
 }
 
-// Append-only — this file only exports insertEvent and listEventsForTransaction.
+// Append-only: this file only exports insertEvent and listEventsForTransaction.
 // A correction adds a new event here rather than editing an old one.
 const classificationEventSchema = new Schema<ClassificationEventDocument>(
   {

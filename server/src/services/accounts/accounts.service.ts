@@ -26,7 +26,7 @@ export async function listAccounts(organisationId: string): Promise<AccountView[
 }
 
 export async function getAccountById(organisationId: string, accountId: string): Promise<AccountView> {
-  // A malformed id shouldn't 500 from a Mongoose cast error — treat it the
+  // A malformed id shouldn't 500 from a Mongoose cast error; treat it the
   // same as a valid id that just doesn't belong to this organisation.
   if (!mongoose.isValidObjectId(accountId)) {
     throw new NotFoundError('Account not found');

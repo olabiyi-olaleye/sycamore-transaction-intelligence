@@ -91,7 +91,7 @@ const transactionSchema = new Schema<TransactionDocument>(
   { timestamps: true, collection: 'transactions' },
 );
 
-// This is what actually decides a duplicate import — importTransaction()
+// This is what actually decides a duplicate import: importTransaction()
 // below always attempts the insert and reacts to the E11000 this throws,
 // rather than checking existence first.
 transactionSchema.index({ organisationId: 1, accountId: 1, externalReference: 1 }, { unique: true });
@@ -192,7 +192,7 @@ export interface BatchInsertOutcome {
 /**
  * `ordered: false` so one bad row never blocks the rest. On a partial
  * failure the driver throws rather than returning a result, so the success
- * list has to be read back out of the error — this is the only place that
+ * list has to be read back out of the error, and this is the only place that
  * reads that shape.
  */
 export async function insertManyTransactions(docs: NewTransactionInput[]): Promise<BatchInsertOutcome> {
@@ -317,7 +317,7 @@ export async function listTransactions(
 /**
  * Claims whichever due transaction comes first: `pending` and due now, or
  * `processing` with an expired lock (a crashed worker's job). This is the
- * one explicit, commented bypass of the tenant-guard plugin — it has to look
+ * one explicit, commented bypass of the tenant-guard plugin. It has to look
  * across every organisation at once, since it doesn't know yet which one's
  * transaction is next.
  */

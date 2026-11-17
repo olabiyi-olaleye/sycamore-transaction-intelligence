@@ -76,7 +76,7 @@ export interface CreateFlagInput {
 /**
  * Idempotent through the unique (transactionId, type) index: a detector that
  * runs twice over the same transaction raises the flag once. Insert-first,
- * same as transaction ingestion — never check-then-insert.
+ * same as transaction ingestion, never check-then-insert.
  */
 export async function createFlag(organisationId: string, input: CreateFlagInput): Promise<void> {
   try {

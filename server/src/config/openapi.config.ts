@@ -1,4 +1,4 @@
-// Hand-maintained, not generated — routes call schema.parse() directly
+// Hand-maintained, not generated: routes call schema.parse() directly
 // rather than going through Express's own validation, so there's no
 // automatic pipeline from the Zod schemas to this file. Update both when
 // either one changes.

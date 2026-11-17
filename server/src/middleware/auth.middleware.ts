@@ -4,7 +4,7 @@ import { getRequestContext, runWithRequestContext } from '../context/requestCont
 import { tokenPayloadSchema, verifyAccessToken } from '../services/auth/jwt.js';
 
 // organisationId comes from the verified token's claim here, and nowhere
-// else — never a body, query string, or path parameter. Mounted only on the
+// else: never a body, query string, or path parameter. Mounted only on the
 // protected router in app.ts, so /auth/login, /health and /docs skip it.
 export function authMiddleware(req: Request, _res: Response, next: NextFunction): void {
   const header = req.headers.authorization;

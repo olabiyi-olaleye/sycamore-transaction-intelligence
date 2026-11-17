@@ -23,7 +23,7 @@ async function drainQueue(): Promise<void> {
     const outcome = await processOneClaimedTransaction();
     if (outcome === 'empty') return;
   }
-  throw new Error('drainQueue did not terminate — something is stuck retrying');
+  throw new Error('drainQueue did not terminate; something is stuck retrying');
 }
 
 beforeEach(async () => {
@@ -415,13 +415,13 @@ describe('backlog drains once the provider recovers', () => {
 
     const stillPending = await TransactionModel.find({ organisationId: orgId, _id: { $in: created.map((c) => c._id) } }).lean();
     expect(stillPending.every((tx) => tx.classification.status === 'pending')).toBe(true);
-    expect(await processOneClaimedTransaction()).toBe('empty'); // nothing due yet — backoff hasn't elapsed
+    expect(await processOneClaimedTransaction()).toBe('empty'); // nothing due yet, backoff hasn't elapsed
 
     setMockLlmMode('ok');
     await wait(2600); // past the first backoff window
 
     // Other test files' leftover retries can become due in the same window
-    // and queue-jump ours (earlier nextAttemptAt claims first) — drain
+    // and queue-jump ours (earlier nextAttemptAt claims first), so drain
     // through those too rather than assuming our 3 claims are next.
     const ids = created.map((c) => c._id);
     for (let i = 0; i < 30; i += 1) {

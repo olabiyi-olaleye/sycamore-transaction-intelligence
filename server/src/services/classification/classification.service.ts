@@ -190,7 +190,7 @@ async function classifyTransaction(transaction: TransactionDocument): Promise<vo
 /**
  * A manual correction: writes the event and updates the transaction in one
  * multi-document transaction (models/transaction.model.ts's applyCorrection),
- * then resolves any LOW_CONFIDENCE or CLASSIFICATION_FAILED flag on it — a
+ * then resolves any LOW_CONFIDENCE or CLASSIFICATION_FAILED flag on it, since a
  * human has just done what those flags were asking for.
  */
 export async function correctClassification(

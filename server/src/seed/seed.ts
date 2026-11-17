@@ -11,7 +11,7 @@ import { generateSeedRows } from './generateTransactions.js';
 // Organisations and users are upserted on a natural key (name, email) with
 // $setOnInsert, so re-running never duplicates them. Transactions go through
 // the real import service (importBatch), so a re-run just reports every row
-// as a duplicate — same as any client resending a batch.
+// as a duplicate, the same as any client resending a batch.
 async function main(): Promise<void> {
   await connectDb();
   const passwordHash = await argon2.hash(config.SEED_PASSWORD);

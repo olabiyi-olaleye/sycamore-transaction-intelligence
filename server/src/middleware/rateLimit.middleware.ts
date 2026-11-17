@@ -1,7 +1,7 @@
 import type { NextFunction, Request, Response } from 'express';
 import { RateLimitedError } from '../utils/errors.js';
 
-// In-memory, per-process — fine for one instance, but a horizontally scaled
+// In-memory and per-process: fine for one instance, but a horizontally scaled
 // deployment would need this in Redis instead, since each instance would
 // otherwise have its own counter.
 const WINDOW_MS = 15 * 60 * 1000;

@@ -14,7 +14,7 @@
   color: var(--sage);
   display: flex;
   flex-direction: column;
-  /* Pinned to the viewport height regardless of how tall .content grows —
+  /* Pinned to the viewport height regardless of how tall .content grows;
      otherwise a long transaction list stretches the whole flex row (sidebar
      included) past the viewport and pushes "Sign out" below the fold. */
   position: sticky;

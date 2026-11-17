@@ -71,7 +71,7 @@ export function TransactionDetailPage() {
           <section className="panel">
             <h2 className="panel__title">
               {transaction.narration}
-              {transaction.merchant ? ` — ${transaction.merchant}` : ''}
+              {transaction.merchant ? ` · ${transaction.merchant}` : ''}
             </h2>
             <dl className="kv-list">
               <dt>Amount</dt>
@@ -90,7 +90,7 @@ export function TransactionDetailPage() {
               <dd>
                 <StatusBadge status={transaction.classification.status} />
                 {transaction.classification.lastError && (
-                  <span className="micro-label"> — {transaction.classification.lastError}</span>
+                  <span className="micro-label"> · {transaction.classification.lastError}</span>
                 )}
               </dd>
               <dt>Review status</dt>
@@ -103,7 +103,7 @@ export function TransactionDetailPage() {
           <section className="panel">
             <h2 className="panel__title">Classification history</h2>
             {transaction.classificationHistory.length === 0 ? (
-              <StateMessage>No classification yet — this transaction is still waiting on the worker.</StateMessage>
+              <StateMessage>No classification yet. This transaction is still waiting on the worker.</StateMessage>
             ) : (
               <ul className="timeline">
                 {transaction.classificationHistory.map((event, index) => (

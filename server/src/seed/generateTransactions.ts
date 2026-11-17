@@ -36,7 +36,7 @@ function addDays(date: Date, days: number): string {
   return copy.toISOString().slice(0, 10);
 }
 
-// Quick hash so the same seed key always jitters to the same amount — keeps
+// Quick hash so the same seed key always jitters to the same amount, which keeps
 // re-running the seed script reproducible without a random seed library.
 function djb2(text: string): number {
   let hash = 5381;

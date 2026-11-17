@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { CATEGORIES } from '../constants/categories.js';
 
-// Validates whatever a provider returns before the app trusts it — a
+// Validates whatever a provider returns before the app trusts it: a
 // malformed body or an unknown category is a failure, not something we cast
 // our way past.
 export const classifyResultSchema = z.object({

@@ -6,7 +6,7 @@ function zodDetails(error: ZodError) {
   return error.issues.map((issue) => ({ path: issue.path.join('.'), message: issue.message }));
 }
 
-// Registered last in app.ts, after every route — Express routes any error
+// Registered last in app.ts, after every route. Express routes any error
 // passed to next(err) (or thrown inside an async handler wrapped by
 // asyncHandler) here, and nowhere else turns an error into a response.
 export function errorMiddleware(err: unknown, req: Request, res: Response, _next: NextFunction): void {
