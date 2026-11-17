@@ -89,3 +89,40 @@ describe('GET /api/v1/me', () => {
     expect(meResponse.json()).toMatchObject({ email, name: 'Bola', role: 'member' });
   });
 });
+
+describe('login rate limiting', () => {
+  it('returns 429 after 5 attempts for the same ip+email within the window', async () => {
+    const app = buildApp();
+    const rateLimitedEmail = uniqueEmail('rate-limited');
+
+    const statuses: number[] = [];
+    for (let attempt = 0; attempt < 6; attempt += 1) {
+      const response = await app.inject({
+        method: 'POST',
+        url: '/api/v1/auth/login',
+        payload: { email: rateLimitedEmail, password: 'whatever' },
+      });
+      statuses.push(response.statusCode);
+    }
+
+    expect(statuses.slice(0, 5)).toEqual([401, 401, 401, 401, 401]);
+    expect(statuses[5]).toBe(429);
+  });
+
+  it('does not rate-limit a different email from the same caller', async () => {
+    const app = buildApp();
+    const sharedEmail = uniqueEmail('shared-ip-a');
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      await app.inject({ method: 'POST', url: '/api/v1/auth/login', payload: { email: sharedEmail, password: 'whatever' } });
+    }
+
+    const otherEmail = uniqueEmail('shared-ip-b');
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/v1/auth/login',
+      payload: { email: otherEmail, password: 'whatever' },
+    });
+
+    expect(response.statusCode).toBe(401); // not 429 — a different account, not locked out by the first
+  });
+});

@@ -11,6 +11,7 @@ import { accountsRoutes } from '../modules/accounts/accounts.routes.js';
 import { transactionsRoutes } from '../modules/transactions/transactions.routes.js';
 import { dashboardRoutes } from '../modules/dashboard/dashboard.routes.js';
 import { reviewRoutes } from '../modules/review/review.routes.js';
+import { docsRoutes } from '../openapi/docs.routes.js';
 
 export function buildApp(): FastifyInstance {
   const app = Fastify({
@@ -33,6 +34,7 @@ export function buildApp(): FastifyInstance {
   app.register(cors, { origin: true });
   registerErrorHandler(app);
   app.register(healthRoutes);
+  app.register(docsRoutes);
 
   // Public: no bearer token required.
   app.register(authRoutes, { prefix: '/api/v1' });

@@ -46,6 +46,44 @@ describe('cross-organisation access', () => {
     expect(response.json().error.code).toBe('NOT_FOUND');
   });
 
+  it('returns 404, not a 500, for a malformed account id', async () => {
+    const password = 'org-malformed-id-password';
+    const org = await createOrganisation('Malformed Id Co');
+    const email = uniqueEmail('malformed-id-user');
+    await createUser(org._id.toString(), { email, password });
+
+    const app = buildApp();
+    const token = await loginAs(app, email, password);
+
+    const response = await app.inject({
+      method: 'GET',
+      url: '/api/v1/accounts/not-an-object-id',
+      headers: { authorization: `Bearer ${token}` },
+    });
+
+    expect(response.statusCode).toBe(404);
+  });
+
+  it('returns a real account for a valid id in the caller\'s own organisation', async () => {
+    const password = 'org-own-account-password';
+    const org = await createOrganisation('Own Account Co');
+    const email = uniqueEmail('own-account-user');
+    await createUser(org._id.toString(), { email, password });
+    const account = await createAccount(org._id.toString(), { name: 'My Own Account' });
+
+    const app = buildApp();
+    const token = await loginAs(app, email, password);
+
+    const response = await app.inject({
+      method: 'GET',
+      url: `/api/v1/accounts/${account._id.toString()}`,
+      headers: { authorization: `Bearer ${token}` },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({ id: account._id.toString(), name: 'My Own Account' });
+  });
+
   it('lists only the caller organisation\'s accounts', async () => {
     const password = 'org-c-password-value';
     const orgC = await createOrganisation('Org C');

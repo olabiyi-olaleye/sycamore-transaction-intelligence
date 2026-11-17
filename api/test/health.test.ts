@@ -12,6 +12,18 @@ describe('GET /health', () => {
   });
 });
 
+describe('GET /docs', () => {
+  it('serves the OpenAPI spec without requiring a token', async () => {
+    const app = buildApp();
+    const response = await app.inject({ method: 'GET', url: '/docs' });
+
+    expect(response.statusCode).toBe(200);
+    const body = response.json();
+    expect(body.openapi).toBe('3.0.3');
+    expect(body.paths['/transactions']).toBeDefined();
+  });
+});
+
 describe('unknown routes', () => {
   it('returns a structured 404', async () => {
     const app = buildApp();
