@@ -10,38 +10,90 @@ explains what I built, why, and what I'd do differently with more time.
 
 ## 1. Running it
 
-```
+### Prerequisites
+
+- **Docker + Docker Compose** (the recommended path — this is all you need), **or**
+- **Node.js 22+** and a MongoDB 7 replica set of your own, if you'd rather run it without
+  Docker (see [Running without Docker](#running-without-docker) below).
+
+### Quick start (Docker)
+
+From the repository root:
+
+```bash
+# 1. Copy the example env file. docker-compose.yml configures the containers
+#    itself, but this is also what npm run seed reads when run from your host.
 cp api/.env.example api/.env
+
+# 2. Build and start MongoDB (as a replica set), the API, the classification
+#    worker, and the web app.
 docker compose up -d --build
+
+# 3. Load two organisations and ~400 transactions through the real import API.
 cd api && npm run seed
 ```
 
-That starts MongoDB as a single-node replica set, the API on `:4000`, the classification
-worker, and the web app on `:5173`. `npm run seed` loads two organisations, four users, and
-about 400 transactions through the real import API (not inserted directly), so the worker
-starts classifying them within a few seconds.
-
-Open `http://localhost:5173` and log in as:
+Give the worker a few seconds to classify the newly seeded transactions, then open
+**http://localhost:5173** and log in as:
 
 | Organisation | Email | Password |
 |---|---|---|
 | Lagos Fresh Foods Ltd (food retail) | `adaeze.okafor@lagosfreshfoods.ng` | `Passw0rd!2024` |
 | Nimbus Cloud Systems Ltd (SaaS) | `chidi.eze@nimbuscloud.ng` | `Passw0rd!2024` |
 
-(Password is `SEED_PASSWORD` in `api/.env.example`; both seed organisations use it.)
+(The password is `SEED_PASSWORD` in `api/.env.example`; both seed organisations use it.)
 
-Running without Docker: copy `api/.env.example` to `api/.env` and `web/.env.example` to
-`web/.env`, start a MongoDB replica set yourself, then `npm install && npm run dev` in each
-of `api/` and `web/`, and `npm run worker` in `api/` in a third terminal.
+**Checking it's actually up**, if anything looks wrong:
 
+```bash
+docker compose ps                              # all five services should be "running"
+curl http://localhost:4000/health              # {"status":"ok","db":"connected"}
+curl -o /dev/null -w "%{http_code}\n" http://localhost:5173   # 200
 ```
-docker compose up        # everything
-npm run dev               # api, in api/
-npm run worker            # classification worker, in api/
-npm test                  # api tests, in api/
-npm run seed               # load seed data, in api/
-npm run dev                # web, in web/
+
+**Stopping it:**
+
+```bash
+docker compose down            # stops and removes the containers, keeps the data
+docker compose down -v         # also deletes the MongoDB data volume (next start reseeds clean)
 ```
+
+**If you change any source file** after the stack is already running, the containers won't
+pick it up automatically — `docker compose up -d --build` only copies code in at image-build
+time, it isn't a live mount. Re-run `docker compose up -d --build` (optionally with just the
+one service that changed, e.g. `docker compose up -d --build web`) to rebuild and restart.
+
+### Running without Docker
+
+```bash
+cp api/.env.example api/.env       # point MONGO_URI at your own replica set
+cp web/.env.example web/.env
+
+cd api && npm install && npm run dev      # terminal 1: the API, on :4000
+cd api && npm run worker                  # terminal 2: the classification worker
+cd web && npm install && npm run dev      # terminal 3: the web app, on :5173
+```
+
+Then, from `api/`, run `npm run seed` once to load the sample data (needs the API's `.env`
+in place so it can reach your MongoDB). Your own MongoDB must be running as a replica set —
+even a single-node one — because the correction endpoint uses a multi-document transaction,
+which Mongo only supports on a replica set.
+
+### Command reference
+
+| Command | Where | What it does |
+|---|---|---|
+| `docker compose up -d --build` | repo root | Build and start everything |
+| `docker compose down` | repo root | Stop everything |
+| `docker compose logs -f api\|worker\|web\|mongo` | repo root | Tail one service's logs |
+| `npm run dev` | `api/` | Run the API with hot reload |
+| `npm run worker` | `api/` | Run the classification worker |
+| `npm test` | `api/` | Run the API test suite (needs Mongo reachable) |
+| `npm run typecheck` | `api/` or `web/` | Type-check without emitting |
+| `npm run seed` | `api/` | Load the sample organisations/accounts/transactions (idempotent — safe to re-run) |
+| `npm run openapi` | `api/` | Regenerate `docs/openapi.json` |
+| `npm run dev` | `web/` | Run the web app with hot reload |
+| `npm run build` | `web/` | Type-check and build the web app for production |
 
 ## 2. Architecture
 
