@@ -1,11 +1,13 @@
 import { useState, type FormEvent } from 'react';
 import { Navigate, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../auth/AuthContext.js';
+import { EyeIcon } from '../components/EyeIcon.js';
 
 export function LoginPage() {
   const { isAuthenticated, isAuthenticating, login } = useAuth();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
   const navigate = useNavigate();
   const location = useLocation();
@@ -49,14 +51,25 @@ export function LoginPage() {
             <label className="micro-label" htmlFor="password">
               Password
             </label>
-            <input
-              id="password"
-              type="password"
-              autoComplete="current-password"
-              value={password}
-              onChange={(event) => setPassword(event.target.value)}
-              required
-            />
+            <div className="input-with-action">
+              <input
+                id="password"
+                type={showPassword ? 'text' : 'password'}
+                autoComplete="current-password"
+                value={password}
+                onChange={(event) => setPassword(event.target.value)}
+                required
+              />
+              <button
+                type="button"
+                className="input-action-button"
+                onClick={() => setShowPassword((prev) => !prev)}
+                aria-label={showPassword ? 'Hide password' : 'Show password'}
+                aria-pressed={showPassword}
+              >
+                <EyeIcon open={showPassword} />
+              </button>
+            </div>
           </div>
           {formError && <p className="form-error">{formError}</p>}
           <button type="submit" className="primary" disabled={isAuthenticating} style={{ width: '100%' }}>

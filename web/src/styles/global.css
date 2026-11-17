@@ -14,10 +14,16 @@
   color: var(--sage);
   display: flex;
   flex-direction: column;
+  /* Pinned to the viewport height regardless of how tall .content grows —
+     otherwise a long transaction list stretches the whole flex row (sidebar
+     included) past the viewport and pushes "Sign out" below the fold. */
+  position: sticky;
+  top: 0;
+  height: 100vh;
 }
 
 .sidebar__brand {
-  font-family: var(--font-display);
+  font-family: var(--font-primary);
   font-size: 22px;
   color: #fff;
   padding: var(--space-6) var(--space-5);
@@ -148,8 +154,35 @@
   margin-bottom: var(--space-1);
 }
 
+.input-with-action {
+  position: relative;
+  display: flex;
+}
+
+.input-with-action input {
+  flex: 1;
+  padding-right: calc(var(--space-6) + var(--space-4));
+}
+
+.input-action-button {
+  position: absolute;
+  right: var(--space-1);
+  top: 50%;
+  transform: translateY(-50%);
+  background: transparent;
+  border: none;
+  padding: var(--space-1);
+  display: flex;
+  align-items: center;
+  color: var(--muted);
+}
+
+.input-action-button:hover {
+  color: var(--ink);
+}
+
 input, select, textarea {
-  font-family: var(--font-ui);
+  font-family: var(--font-primary);
   font-size: 14px;
   padding: var(--space-2) var(--space-3);
   border: 1px solid var(--border);
@@ -435,6 +468,8 @@ button.secondary:disabled {
   }
   .sidebar {
     width: 100%;
+    position: static;
+    height: auto;
   }
   .detail-grid {
     grid-template-columns: 1fr;
