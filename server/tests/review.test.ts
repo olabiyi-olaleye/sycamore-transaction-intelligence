@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import request from 'supertest';
 import { ClassificationEventModel } from '../src/models/classificationEvent.model.js';
-import { ReviewFlagModel } from '../src/models/reviewFlag.model.js';
+import { ReviewFlagModel, createFlag } from '../src/models/reviewFlag.model.js';
 import { TransactionModel } from '../src/models/transaction.model.js';
 import { buildApp } from '../src/app.js';
 import { detectPossibleDuplicate, detectUnusuallyLarge } from '../src/services/review/detectors.js';
@@ -252,5 +252,54 @@ describe('POST /api/v1/transactions/:id/corrections', () => {
       .send({ category: 'OTHER' });
 
     expect(response.status).toBe(404);
+  });
+});
+
+describe('transaction.reviewStatus follows its flags', () => {
+  it("moves to 'open' when a flag is raised and shows up in the reviewStatus filter", async () => {
+    const { app, orgId, accountId, authHeader } = await setupOrgWithToken();
+    const tx = await createTransaction(orgId, { accountId, amountKobo: 1000n, direction: 'debit', date: day(3) });
+
+    await createFlag(orgId, { transactionId: tx._id.toString(), type: 'LOW_CONFIDENCE', reason: 'r' });
+
+    const reread = await TransactionModel.findOne({ organisationId: orgId, _id: tx._id }).lean();
+    expect(reread?.reviewStatus).toBe('open');
+
+    const listed = await request(app).get('/api/v1/transactions?reviewStatus=open').set('authorization', authHeader);
+    expect(listed.body.transactions.map((t: { id: string }) => t.id)).toContain(tx._id.toString());
+  });
+
+  it("stays 'open' until the last open flag is resolved, then moves to 'resolved'", async () => {
+    const { app, orgId, accountId, authHeader } = await setupOrgWithToken();
+    const tx = await createTransaction(orgId, { accountId, amountKobo: 1000n, direction: 'debit', date: day(4) });
+    await createFlag(orgId, { transactionId: tx._id.toString(), type: 'LOW_CONFIDENCE', reason: 'r1' });
+    await createFlag(orgId, { transactionId: tx._id.toString(), type: 'UNUSUALLY_LARGE', reason: 'r2' });
+    const flags = await ReviewFlagModel.find({ organisationId: orgId, transactionId: tx._id }).lean();
+
+    await request(app).post(`/api/v1/review/flags/${flags[0]!._id}/resolve`).set('authorization', authHeader);
+    let reread = await TransactionModel.findOne({ organisationId: orgId, _id: tx._id }).lean();
+    expect(reread?.reviewStatus).toBe('open');
+
+    await request(app).post(`/api/v1/review/flags/${flags[1]!._id}/resolve`).set('authorization', authHeader);
+    reread = await TransactionModel.findOne({ organisationId: orgId, _id: tx._id }).lean();
+    expect(reread?.reviewStatus).toBe('resolved');
+  });
+
+  it("moves to 'resolved' when a correction clears the only open flag", async () => {
+    const { app, orgId, accountId, authHeader } = await setupOrgWithToken();
+    const tx = await createTransaction(orgId, {
+      accountId,
+      amountKobo: 15000n,
+      direction: 'debit',
+      date: day(5),
+      category: { value: 'MARKETING', source: 'ai', confidence: 0.42 },
+      classificationStatus: 'classified',
+    });
+    await createFlag(orgId, { transactionId: tx._id.toString(), type: 'LOW_CONFIDENCE', reason: 'r' });
+
+    await request(app).post(`/api/v1/transactions/${tx._id}/corrections`).set('authorization', authHeader).send({ category: 'SOFTWARE' });
+
+    const reread = await TransactionModel.findOne({ organisationId: orgId, _id: tx._id }).lean();
+    expect(reread?.reviewStatus).toBe('resolved');
   });
 });

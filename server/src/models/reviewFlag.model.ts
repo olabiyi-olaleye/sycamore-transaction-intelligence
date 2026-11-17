@@ -1,5 +1,6 @@
 import { Schema, Types, model } from 'mongoose';
 import { tenantScopePlugin } from './tenantPlugin.js';
+import { TransactionModel, type ReviewStatus } from './transaction.model.js';
 import type { ListCursor } from '../utils/cursor.js';
 
 export type ReviewFlagType = 'POSSIBLE_DUPLICATE' | 'UNUSUALLY_LARGE' | 'LOW_CONFIDENCE' | 'CLASSIFICATION_FAILED';
@@ -49,6 +50,22 @@ function isDuplicateKeyError(error: unknown): boolean {
   return (error as { code?: number } | undefined)?.code === 11000;
 }
 
+/**
+ * Recomputes transaction.reviewStatus from its flags: 'open' while any flag is
+ * open, 'resolved' once every flag is resolved, 'none' if it never had one.
+ * Recomputing (rather than setting a value) keeps it correct however the
+ * flag writes interleave, and makes it safe to call more than once.
+ */
+export async function syncReviewStatus(organisationId: string, transactionId: string): Promise<ReviewStatus> {
+  const [openCount, totalCount] = await Promise.all([
+    ReviewFlagModel.countDocuments({ organisationId, transactionId, status: 'open' }),
+    ReviewFlagModel.countDocuments({ organisationId, transactionId }),
+  ]);
+  const reviewStatus: ReviewStatus = openCount > 0 ? 'open' : totalCount > 0 ? 'resolved' : 'none';
+  await TransactionModel.updateOne({ organisationId, _id: transactionId }, { $set: { reviewStatus } });
+  return reviewStatus;
+}
+
 export interface CreateFlagInput {
   transactionId: string;
   type: ReviewFlagType;
@@ -71,11 +88,13 @@ export async function createFlag(organisationId: string, input: CreateFlagInput)
       details: input.details ?? null,
     });
   } catch (error) {
-    if (isDuplicateKeyError(error)) {
-      return;
+    if (!isDuplicateKeyError(error)) {
+      throw error;
     }
-    throw error;
   }
+  // Runs on the duplicate path too, so a retry after a crash between the two
+  // writes still leaves the transaction marked 'open'.
+  await syncReviewStatus(organisationId, input.transactionId);
 }
 
 export function listFlagsForTransaction(organisationId: string, transactionId: string): Promise<ReviewFlagDocument[]> {
@@ -115,29 +134,38 @@ export function findFlagById(organisationId: string, flagId: string): Promise<Re
 }
 
 /** Resolves only if still open, so resolving twice is a no-op the caller can detect (null back). */
-export function resolveFlag(
+export async function resolveFlag(
   organisationId: string,
   flagId: string,
   resolvedBy: string,
 ): Promise<ReviewFlagDocument | null> {
-  return ReviewFlagModel.findOneAndUpdate(
+  const resolved = await ReviewFlagModel.findOneAndUpdate(
     { organisationId, _id: flagId, status: 'open' },
     { $set: { status: 'resolved', resolvedBy, resolvedAt: new Date() } },
     { new: true },
   ).lean();
+  if (resolved) {
+    await syncReviewStatus(organisationId, resolved.transactionId.toString());
+  }
+  return resolved;
 }
 
-/** Called from a correction: a human categorising a transaction resolves any LOW_CONFIDENCE/CLASSIFICATION_FAILED flag on it. */
+/**
+ * Resolves the given flag types on one transaction. Called from a manual
+ * correction (resolvedBy is the user) and when the worker classifies a
+ * transaction that had previously failed (resolvedBy is null: the system).
+ */
 export async function resolveOpenFlagsForTransaction(
   organisationId: string,
   transactionId: string,
   types: ReviewFlagType[],
-  resolvedBy: string,
+  resolvedBy: string | null,
 ): Promise<void> {
   await ReviewFlagModel.updateMany(
     { organisationId, transactionId, type: { $in: types }, status: 'open' },
     { $set: { status: 'resolved', resolvedBy, resolvedAt: new Date() } },
   );
+  await syncReviewStatus(organisationId, transactionId);
 }
 
 export function countOpenFlags(organisationId: string): Promise<number> {
