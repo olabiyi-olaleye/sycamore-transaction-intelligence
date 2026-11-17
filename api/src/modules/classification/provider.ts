@@ -15,12 +15,12 @@ export interface ClassifyResult {
 }
 
 /**
- * The pluggable AI backend. Rules (rules.ts) are not a ClassificationProvider
- * — they are a deterministic pre-filter that runs before this is ever
- * called. This interface exists specifically so the AI step can be swapped
- * (mock LLM today, a real vendor later) without touching the worker or the
- * rest of the classification module; it is the one interface in the app
- * allowed to have a single implementation.
+ * The pluggable AI backend. Rules (rules.ts) aren't a ClassificationProvider
+ * — they're a deterministic pre-filter that runs before this ever gets
+ * called. This interface exists so the AI step can be swapped (mock LLM
+ * today, a real vendor later) without touching the worker or anything else
+ * in the classification module. It's the one interface here allowed to have
+ * just a single implementation.
  */
 export interface ClassificationProvider {
   readonly name: string;

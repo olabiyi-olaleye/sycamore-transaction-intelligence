@@ -62,7 +62,7 @@ export async function detectUnusuallyLarge(organisationId: string, transaction: 
   const multiplier = await getLargePaymentMultiple(organisationId);
   if (transaction.amountKobo <= median * BigInt(multiplier)) return;
 
-  const multiple = transaction.amountKobo / median; // integer bigint division — no float arithmetic on money
+  const multiple = transaction.amountKobo / median; // bigint division, so no float touches the money here
   await createFlag(organisationId, {
     transactionId: transaction._id.toString(),
     type: 'UNUSUALLY_LARGE',

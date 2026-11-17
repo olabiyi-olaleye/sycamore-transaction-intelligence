@@ -1,9 +1,8 @@
 // Amounts arrive from the API as decimal strings ("12999.75") and stay
-// strings everywhere here — no Number()/parseFloat.
+// strings everywhere here. No Number(), no parseFloat.
 
-// Only used to compare two amounts by size (for sizing a spending bar), not
-// for anything displayed or stored — still parsed by splitting the string,
-// same as the server side.
+// Only for comparing two amounts by size, to size a spending bar — never for
+// anything displayed or stored. Parsed the same way the server does it.
 export function parseKoboForComparison(amount: string): bigint {
   const negative = amount.startsWith('-');
   const unsigned = negative ? amount.slice(1) : amount;

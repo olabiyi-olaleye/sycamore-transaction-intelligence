@@ -16,8 +16,8 @@ export interface LoginResult {
 
 export async function login(email: string, password: string): Promise<LoginResult> {
   const user = await findUserByEmail(email);
-  // Same error for "no such user" and "wrong password" so a caller cannot
-  // use the response to enumerate registered emails.
+  // Same error for "no such user" and "wrong password" so a caller can't use
+  // the response to enumerate registered emails.
   if (!user) {
     throw new UnauthorisedError('Invalid email or password');
   }

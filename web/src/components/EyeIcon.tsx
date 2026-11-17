@@ -2,7 +2,6 @@ interface EyeIconProps {
   open: boolean;
 }
 
-// Inline SVG, not an icon font/library — two simple paths toggled by `open`.
 export function EyeIcon({ open }: EyeIconProps) {
   if (open) {
     return (

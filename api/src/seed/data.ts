@@ -1,6 +1,4 @@
-// Static seed fixtures: two organisations in different lines of business,
-// two users and two or three accounts each. Transaction generation lives in
-// generateTransactions.ts.
+// Transaction generation lives in generateTransactions.ts, not here.
 
 export type AccountRole = 'operating' | 'payroll' | 'reserve';
 

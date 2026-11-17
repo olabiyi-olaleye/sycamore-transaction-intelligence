@@ -12,11 +12,11 @@ import {
 import { type Category } from '../transactions/categories.js';
 
 /**
- * Atomically claims whichever due transaction comes first: `pending` and due
- * now, or `processing` with an expired lock (a crashed worker's job). This is
- * the one explicit, commented bypass of the tenant-guard plugin in the whole
- * app — by design it has to look across every organisation at once, because
- * it does not yet know which organisation's transaction is next.
+ * Claims whichever due transaction comes first: `pending` and due now, or
+ * `processing` with an expired lock (a crashed worker's job). This is the
+ * one explicit, commented bypass of the tenant-guard plugin — it has to look
+ * across every organisation at once, since it doesn't know yet which one's
+ * transaction is next.
  */
 export async function claimNextTransaction(lockMs: number): Promise<TransactionDocument | null> {
   const now = new Date();

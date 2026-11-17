@@ -3,7 +3,7 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 export interface RequestContext {
   readonly requestId: string;
   // Set once, from the verified JWT, in the auth hook. Absent on routes that
-  // do not require auth (login, health, docs).
+  // don't require auth (login, health, docs).
   readonly organisationId?: string;
   readonly userId?: string;
   readonly role?: 'admin' | 'member';

@@ -2,8 +2,8 @@ import { z } from 'zod';
 import { AMOUNT_PATTERN, parseAmountToKobo } from '../../money/money.js';
 import { CATEGORIES } from './categories.js';
 
-// Only calls parseAmountToKobo to validate, never to do arithmetic — the
-// parsing itself stays in money.ts.
+// Only calls parseAmountToKobo to validate, never to do arithmetic. The
+// actual parsing stays in money.ts.
 export const amountSchema = z
   .string({
     error:
