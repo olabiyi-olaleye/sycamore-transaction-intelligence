@@ -1,5 +1,5 @@
 import { config } from '../../config/env.js';
-import { CATEGORIES } from '../../constants/categories.js';
+import { categoriesForDirection } from '../../constants/categories.js';
 import { RateLimitedProviderError, type ClassificationProvider, type ClassifyInput, type ClassifyResult } from './provider.js';
 
 export type MockLlmMode = 'ok' | 'slow' | 'down' | 'rate_limited' | 'invalid';
@@ -37,7 +37,7 @@ function djb2(text: string): number {
   return hash >>> 0;
 }
 
-function pseudoClassify(input: ClassifyInput): ClassifyResult {
+export function pseudoClassify(input: ClassifyInput): ClassifyResult {
   const text = `${input.narration} ${input.merchant ?? ''}`.toLowerCase();
   const categoryHash = djb2(text);
   // Hash the merchant alone for confidence, not the full narration: a lot of
@@ -46,7 +46,8 @@ function pseudoClassify(input: ClassifyInput): ClassifyResult {
   // correlated with the template rather than spread out. Falls back to the
   // full text when there's no merchant to hash.
   const confidenceHash = djb2(input.merchant ? input.merchant.toLowerCase() : text);
-  const category = CATEGORIES[categoryHash % CATEGORIES.length] ?? 'OTHER';
+  const allowed = categoriesForDirection(input.direction);
+  const category = allowed[categoryHash % allowed.length] ?? 'OTHER';
   const confidence = 0.5 + (confidenceHash % 45) / 100; // spans 0.50-0.94, straddling the 0.6 LOW_CONFIDENCE threshold
   return { category, confidence, reason: `Mock LLM inferred ${category} from narration pattern` };
 }
