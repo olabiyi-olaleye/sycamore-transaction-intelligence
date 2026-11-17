@@ -1,3 +1,7 @@
+// Populates process.env from api/.env for local, non-Docker development. Never
+// overrides a variable already set (docker-compose.yml passes real env vars
+// directly, so this is a no-op in containers).
+import 'dotenv/config';
 import { z } from 'zod';
 
 const schema = z.object({

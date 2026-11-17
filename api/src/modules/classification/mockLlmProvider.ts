@@ -40,9 +40,19 @@ function djb2(text: string): number {
 }
 
 function pseudoClassify(input: ClassifyInput): ClassifyResult {
-  const hash = djb2(`${input.narration} ${input.merchant ?? ''}`.toLowerCase());
-  const category = CATEGORIES[hash % CATEGORIES.length] ?? 'OTHER';
-  const confidence = 0.5 + ((hash >> 8) % 45) / 100; // spans 0.50-0.94, straddling the 0.6 LOW_CONFIDENCE threshold
+  const text = `${input.narration} ${input.merchant ?? ''}`.toLowerCase();
+  const categoryHash = djb2(text);
+  // Hashed from a different input than categoryHash, not just different bits
+  // of it: real narrations are often "Payment to X for supplies" with a long
+  // shared template and a short varying merchant name, and djb2 does not mix
+  // a short suffix strongly into its low bits — confidence came out
+  // correlated with the template, clustering ~40-50% of seed data under 0.6
+  // instead of the intended ~22%. Hashing the merchant alone (the part that
+  // actually varies) decorrelates it; narrations with no merchant fall back
+  // to the full text.
+  const confidenceHash = djb2(input.merchant ? input.merchant.toLowerCase() : text);
+  const category = CATEGORIES[categoryHash % CATEGORIES.length] ?? 'OTHER';
+  const confidence = 0.5 + (confidenceHash % 45) / 100; // spans 0.50-0.94, straddling the 0.6 LOW_CONFIDENCE threshold
   return { category, confidence, reason: `Mock LLM inferred ${category} from narration pattern` };
 }
 
