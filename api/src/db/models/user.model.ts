@@ -28,8 +28,9 @@ const userSchema = new Schema<UserDocument>(
 // collection is only ever read after organisationId is already known from a
 // verified token, but logging in is the one place that has to look a user up
 // by email alone, before their organisationId is known — that is the exact
-// query the plugin exists to forbid. CLAUDE.md allows exactly one documented
-// bypass (the worker's claim query), so rather than add a second one here,
+// query the plugin exists to forbid. The design allows exactly one
+// documented bypass (the worker's claim query), so rather than add a second
+// one here,
 // this collection goes without the plugin; every other read of it still
 // takes organisationId as an explicit filter at the call site (see
 // auth.repository.ts findUserById) as defence in depth.
