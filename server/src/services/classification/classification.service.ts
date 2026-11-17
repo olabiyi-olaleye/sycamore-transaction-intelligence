@@ -211,9 +211,14 @@ export async function processOneClaimedTransaction(): Promise<'claimed' | 'empty
   if (!transaction) {
     return 'empty';
   }
-  await classifyTransaction(transaction);
-  // Duplicate/large-payment detection is about the raw transaction, not its
-  // category, so it runs regardless of whether classification succeeded.
-  await runDetectors(transaction.organisationId.toString(), transaction);
+  try {
+    await classifyTransaction(transaction);
+    // Duplicate/large-payment detection is about the raw transaction, not its
+    // category, so it runs regardless of whether classification succeeded.
+    await runDetectors(transaction.organisationId.toString(), transaction);
+  } catch (error) {
+    // Name the transaction in the log; the loop in claimLoop.ts carries on.
+    throw new Error(`Processing transaction ${transaction._id.toString()} failed: ${(error as Error).message}`, { cause: error });
+  }
   return 'claimed';
 }

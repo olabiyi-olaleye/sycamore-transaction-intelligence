@@ -11,13 +11,35 @@ function sleep(ms: number, signal: AbortSignal): Promise<void> {
   });
 }
 
-// Only sleeps when the queue is actually empty, so a backlog drains at
-// provider speed instead of one row per poll interval.
-export async function runClaimLoop(signal: AbortSignal): Promise<void> {
+export interface ClaimLoopOptions {
+  processOne?: () => Promise<'claimed' | 'empty'>;
+  onError?: (error: unknown) => void;
+  pollIntervalMs?: number;
+}
+
+function logError(error: unknown): void {
+  console.error('Worker iteration failed; continuing', error);
+}
+
+// Only sleeps when the queue is empty (or after an error), so a backlog
+// drains at provider speed instead of one row per poll interval. An error in
+// one iteration (a database blip, an unexpected document) is logged and the
+// loop carries on. The transaction it was working on is still locked, so it
+// gets reclaimed once its lock expires.
+export async function runClaimLoop(signal: AbortSignal, options: ClaimLoopOptions = {}): Promise<void> {
+  const processOne = options.processOne ?? processOneClaimedTransaction;
+  const onError = options.onError ?? logError;
+  const pollIntervalMs = options.pollIntervalMs ?? config.WORKER_POLL_INTERVAL_MS;
+
   while (!signal.aborted) {
-    const outcome = await processOneClaimedTransaction();
-    if (outcome === 'empty') {
-      await sleep(config.WORKER_POLL_INTERVAL_MS, signal);
+    try {
+      const outcome = await processOne();
+      if (outcome === 'empty') {
+        await sleep(pollIntervalMs, signal);
+      }
+    } catch (error) {
+      onError(error);
+      await sleep(pollIntervalMs, signal);
     }
   }
 }
