@@ -47,7 +47,6 @@ MOCK_LLM_MODE=ok
 MOCK_LLM_FAILURE_RATE=0
 WORKER_POLL_INTERVAL_MS=1000
 WORKER_LOCK_MS=30000
-WORKER_BATCH_SIZE=10
 SEED_PASSWORD=Passw0rd!2024
 ```
 
@@ -441,6 +440,13 @@ and if it's just sitting there un-mined, that's the real process gap to close.
 - Login rate limiting and the classification circuit breaker are per-process; both are
   clearly marked at their definition site as the first things to move to a shared store in a
   multi-instance deployment.
+- The large-payment detector loads the account's last 90 days of debits into memory to
+  find the median, once per transaction. Fine at prototype volume; at scale I'd keep a
+  running per-account median (or a percentile sketch) updated on insert, or compute it with
+  an aggregation over a pre-bucketed daily summary instead.
+- Search by reference is an exact match: a single token with a digit in it is treated as a
+  reference rather than text, because Mongo's text index splits `TRF/0012` into pieces.
+  Partial reference search would need a prefix index or a search engine.
 - `GET /health` reports database connectivity but not the pending-classification backlog
   size in its body yet — `pendingClassificationCount` is already computed for the dashboard
   and would be a small addition to wire the same query into the health check.

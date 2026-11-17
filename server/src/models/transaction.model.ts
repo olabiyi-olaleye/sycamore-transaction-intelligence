@@ -101,6 +101,7 @@ transactionSchema.index({ organisationId: 1, 'category.value': 1, date: -1 });
 transactionSchema.index({ organisationId: 1, reviewStatus: 1, date: -1 });
 transactionSchema.index({ organisationId: 1, accountId: 1, direction: 1, amountKobo: 1, date: 1 });
 transactionSchema.index({ organisationId: 1, narration: 'text', merchant: 'text' });
+transactionSchema.index({ organisationId: 1, externalReference: 1 });
 transactionSchema.index({ 'classification.status': 1, 'classification.nextAttemptAt': 1 });
 
 transactionSchema.plugin(tenantScopePlugin);
@@ -182,6 +183,10 @@ export function findById(organisationId: string, transactionId: string): Promise
 export interface BatchInsertOutcome {
   inserted: Array<{ position: number; document: TransactionDocument }>;
   duplicatePositions: number[];
+  // Rows the database rejected for a reason other than a duplicate key. The
+  // rest of the batch is unaffected, so these are reported per row instead
+  // of failing the whole request.
+  failed: Array<{ position: number; error: string }>;
 }
 
 /**
@@ -192,7 +197,7 @@ export interface BatchInsertOutcome {
  */
 export async function insertManyTransactions(docs: NewTransactionInput[]): Promise<BatchInsertOutcome> {
   if (docs.length === 0) {
-    return { inserted: [], duplicatePositions: [] };
+    return { inserted: [], duplicatePositions: [], failed: [] };
   }
 
   try {
@@ -200,6 +205,7 @@ export async function insertManyTransactions(docs: NewTransactionInput[]): Promi
     return {
       inserted: created.map((document, position) => ({ position, document: document.toObject() })),
       duplicatePositions: [],
+      failed: [],
     };
   } catch (error) {
     if (!isBulkWriteError(error)) {
@@ -208,12 +214,7 @@ export async function insertManyTransactions(docs: NewTransactionInput[]): Promi
 
     const writeErrors = error.writeErrors ?? [];
     const failedPositions = new Set(writeErrors.map((writeError) => writeError.index));
-    const unexpectedFailures = writeErrors.filter(
-      (writeError) => (writeError.err?.code ?? writeError.code) !== 11000,
-    );
-    if (unexpectedFailures.length > 0) {
-      throw new Error(`Unexpected batch insert failure (not a duplicate key): ${JSON.stringify(unexpectedFailures)}`);
-    }
+    const isDuplicate = (writeError: MongoWriteError) => (writeError.err?.code ?? writeError.code) === 11000;
 
     const insertedPositions = docs.map((_, position) => position).filter((position) => !failedPositions.has(position));
     const insertedDocs = (error.insertedDocs ?? []) as Array<{ toObject?: () => TransactionDocument } & TransactionDocument>;
@@ -223,7 +224,13 @@ export async function insertManyTransactions(docs: NewTransactionInput[]): Promi
         const doc = insertedDocs[order] as { toObject?: () => TransactionDocument } & TransactionDocument;
         return { position, document: doc.toObject ? doc.toObject() : doc };
       }),
-      duplicatePositions: [...failedPositions],
+      duplicatePositions: writeErrors.filter(isDuplicate).map((writeError) => writeError.index),
+      failed: writeErrors
+        .filter((writeError) => !isDuplicate(writeError))
+        .map((writeError) => ({
+          position: writeError.index,
+          error: writeError.err?.errmsg ?? writeError.errmsg ?? 'Database rejected this row',
+        })),
     };
   }
 }
@@ -244,6 +251,10 @@ export interface TransactionListFilters {
   q?: string;
   cursor?: ListCursor;
   limit: number;
+}
+
+export function looksLikeReference(q: string): boolean {
+  return /^\S+$/.test(q) && /\d/.test(q);
 }
 
 export async function listTransactions(
@@ -270,7 +281,16 @@ export async function listTransactions(
     filter.amountKobo = amountRange;
   }
 
-  if (filters.q) filter.$text = { $search: filters.q };
+  // A single token containing a digit ("GTB-88213", "TRF/0012") is almost
+  // always a reference someone pasted in, and the text index splits those
+  // into pieces, so match it exactly instead. Anything else is a text search.
+  if (filters.q) {
+    if (looksLikeReference(filters.q)) {
+      filter.externalReference = filters.q;
+    } else {
+      filter.$text = { $search: filters.q };
+    }
+  }
 
   // Strictly before the last row of the previous page, in the same
   // (date desc, _id desc) order the results are sorted by.

@@ -108,6 +108,21 @@ describe('GET /api/v1/transactions', () => {
   });
 });
 
+describe('GET /api/v1/transactions?q= with a reference', () => {
+  it('matches a pasted reference exactly instead of running a text search', async () => {
+    const { app, account, authHeader } = await setupOrgWithToken();
+    const orgId = account.organisationId.toString();
+    const accountId = account._id.toString();
+    await createTransaction(orgId, { accountId, amountKobo: 1000n, direction: 'debit', date: day(10), externalReference: 'TRF/0012' });
+    await createTransaction(orgId, { accountId, amountKobo: 2000n, direction: 'debit', date: day(11), externalReference: 'TRF/0013' });
+
+    const response = await request(app).get(`/api/v1/transactions?q=${encodeURIComponent('TRF/0012')}`).set('authorization', authHeader);
+
+    expect(response.status).toBe(200);
+    expect(response.body.transactions.map((t: { externalReference: string }) => t.externalReference)).toEqual(['TRF/0012']);
+  });
+});
+
 describe('GET /api/v1/transactions/:id', () => {
   it('returns the transaction with empty classification history and flags for now', async () => {
     const { app, org, account, authHeader } = await setupOrgWithToken();

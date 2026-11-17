@@ -82,7 +82,7 @@ export function TransactionsPage() {
             </label>
             <input
               id="q"
-              placeholder="Narration or merchant"
+              placeholder="Narration, merchant or reference"
               value={filters.q}
               onChange={(event) => setFilters((prev) => ({ ...prev, q: event.target.value }))}
             />

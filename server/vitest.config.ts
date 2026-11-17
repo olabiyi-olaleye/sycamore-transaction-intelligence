@@ -18,7 +18,6 @@ export default defineConfig({
       MOCK_LLM_FAILURE_RATE: '0',
       WORKER_POLL_INTERVAL_MS: '50',
       WORKER_LOCK_MS: '2000',
-      WORKER_BATCH_SIZE: '10',
       SEED_PASSWORD: 'Passw0rd!2024',
     },
   },

@@ -1200,7 +1200,7 @@
             "schema": {
               "type": "string"
             },
-            "description": "Full-text search over narration and merchant"
+            "description": "Full-text search over narration and merchant. A single token containing a digit (e.g. GTB-88213) is matched exactly against externalReference instead."
           }
         ],
         "responses": {

@@ -180,6 +180,12 @@ export async function importBatch(organisationId: string, rawRows: unknown[]): P
     };
   }
 
+  for (const { position, error } of outcome.failed) {
+    const candidate = candidates[position];
+    if (!candidate) continue;
+    results[candidate.index] = { index: candidate.index, status: 'failed', error };
+  }
+
   const summary = { created: 0, duplicate: 0, failed: 0 };
   for (const row of results) {
     summary[row.status] += 1;

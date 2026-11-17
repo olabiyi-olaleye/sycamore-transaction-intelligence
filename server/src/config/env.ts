@@ -13,7 +13,6 @@ const schema = z.object({
   MOCK_LLM_FAILURE_RATE: z.coerce.number().min(0).max(1).default(0),
   WORKER_POLL_INTERVAL_MS: z.coerce.number().int().positive().default(1000),
   WORKER_LOCK_MS: z.coerce.number().int().positive().default(30000),
-  WORKER_BATCH_SIZE: z.coerce.number().int().positive().default(10),
   SEED_PASSWORD: z.string().min(8).default('Passw0rd!2024'),
 });
 

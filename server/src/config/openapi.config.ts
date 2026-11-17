@@ -243,7 +243,7 @@ export const openApiSpec = {
           { name: 'minAmount', in: 'query', schema: { type: 'string' } },
           { name: 'maxAmount', in: 'query', schema: { type: 'string' } },
           { name: 'reviewStatus', in: 'query', schema: { type: 'string', enum: ['none', 'open', 'resolved'] } },
-          { name: 'q', in: 'query', schema: { type: 'string' }, description: 'Full-text search over narration and merchant' },
+          { name: 'q', in: 'query', schema: { type: 'string' }, description: 'Full-text search over narration and merchant. A single token containing a digit (e.g. GTB-88213) is matched exactly against externalReference instead.' },
         ],
         responses: {
           200: {
