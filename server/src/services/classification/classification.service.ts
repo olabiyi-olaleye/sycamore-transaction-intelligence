@@ -16,16 +16,20 @@ import { mockLlmProvider } from './mockLlmProvider.js';
 import { RateLimitedProviderError, type ClassifyInput, type ClassifyResult } from './provider.js';
 import { classifyWithRules } from './rules.js';
 
-const MAX_ATTEMPTS = 5;
+// A transaction is only given up on after this many bad answers (malformed or
+// unknown category). Outages, timeouts and rate limits never count: they
+// retry with capped backoff for as long as the provider is away.
+const MAX_INVALID_RESPONSES = 5;
 const PROVIDER_TIMEOUT_MS = 5000;
 const BASE_BACKOFF_MS = 2000;
 const MAX_BACKOFF_MS = 60_000;
 const LOW_CONFIDENCE_THRESHOLD = 0.6;
 
-// After this many consecutive LLM failures, skip calling the provider for a
-// cool-off and reschedule immediately instead; rules keep running the whole
-// time. In-memory and per-process, so this only works for a single worker —
-// a multi-worker deployment would need to share this state (e.g. in Redis).
+// After this many consecutive LLM failures, stop calling the provider for a
+// cool-off. Transactions claimed meanwhile are pushed back to when the
+// breaker closes, and that skipped attempt isn't counted. Rules keep running
+// the whole time. In-memory and per-process, so it only covers a single
+// worker; several workers would need to share this state (in Redis, say).
 const CIRCUIT_BREAKER_THRESHOLD = 5;
 const CIRCUIT_BREAKER_COOLOFF_MS = 30_000;
 
@@ -60,6 +64,14 @@ function backoffWithJitter(attempts: number): number {
   return Math.round(exponential + jitter);
 }
 
+/** The provider answered, but with something we can't use. */
+class InvalidProviderResponseError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'InvalidProviderResponseError';
+  }
+}
+
 async function callProviderWithTimeout(input: ClassifyInput): Promise<ClassifyResult> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), PROVIDER_TIMEOUT_MS);
@@ -67,7 +79,7 @@ async function callProviderWithTimeout(input: ClassifyInput): Promise<ClassifyRe
     const raw = await mockLlmProvider.classify(input, controller.signal);
     const parsed = classifyResultSchema.safeParse(raw);
     if (!parsed.success) {
-      throw new Error(`Provider returned a malformed result: ${parsed.error.issues.map((issue) => issue.message).join('; ')}`);
+      throw new InvalidProviderResponseError(`Provider returned a malformed result: ${parsed.error.issues.map((issue) => issue.message).join('; ')}`);
     }
     return parsed.data;
   } finally {
@@ -92,6 +104,9 @@ async function finishClassification(
     reason: result.reason,
   });
   await markClassified(organisationId, transactionId, result.category, source, result.confidence, event._id.toString());
+  // A transaction that failed before and was requeued has an open
+  // CLASSIFICATION_FAILED flag; it no longer applies.
+  await resolveOpenFlagsForTransaction(organisationId, transactionId, ['CLASSIFICATION_FAILED'], null);
 
   if (result.confidence < LOW_CONFIDENCE_THRESHOLD) {
     await createFlag(organisationId, {
@@ -102,24 +117,34 @@ async function finishClassification(
   }
 }
 
-async function handleFailure(
+async function handleInvalidResponse(
   organisationId: string,
-  transactionId: string,
-  attempts: number,
+  transaction: TransactionDocument,
   errorMessage: string,
-  retryAfterMs: number | undefined,
 ): Promise<void> {
-  if (attempts >= MAX_ATTEMPTS) {
+  const transactionId = transaction._id.toString();
+  const invalidSoFar = transaction.classification.invalidResponses + 1;
+  if (invalidSoFar >= MAX_INVALID_RESPONSES) {
     await markFailed(organisationId, transactionId, errorMessage);
     await createFlag(organisationId, {
       transactionId,
       type: 'CLASSIFICATION_FAILED',
-      reason: `Automatic categorisation failed after ${MAX_ATTEMPTS} attempts.`,
+      reason: `Automatic categorisation returned an unusable answer ${MAX_INVALID_RESPONSES} times.`,
     });
     return;
   }
-  const delayMs = retryAfterMs ?? backoffWithJitter(attempts);
-  await scheduleRetry(organisationId, transactionId, errorMessage, new Date(Date.now() + delayMs));
+  const delayMs = backoffWithJitter(transaction.classification.attempts);
+  await scheduleRetry(organisationId, transactionId, errorMessage, new Date(Date.now() + delayMs), { invalidResponse: true });
+}
+
+async function handleUnavailable(
+  organisationId: string,
+  transaction: TransactionDocument,
+  errorMessage: string,
+  retryAfterMs: number | undefined,
+): Promise<void> {
+  const delayMs = retryAfterMs ?? backoffWithJitter(transaction.classification.attempts);
+  await scheduleRetry(organisationId, transaction._id.toString(), errorMessage, new Date(Date.now() + delayMs));
 }
 
 async function classifyTransaction(transaction: TransactionDocument): Promise<void> {
@@ -138,8 +163,10 @@ async function classifyTransaction(transaction: TransactionDocument): Promise<vo
     return;
   }
 
-  if (isCircuitOpen()) {
-    await handleFailure(organisationId, transactionId, transaction.classification.attempts, 'LLM circuit breaker open; skipped call', undefined);
+  if (isCircuitOpen() && circuitOpenUntil !== null) {
+    // Small jitter so the whole backlog doesn't come due in the same instant.
+    const retryAt = new Date(circuitOpenUntil + Math.round(Math.random() * 5000));
+    await scheduleRetry(organisationId, transactionId, 'LLM circuit breaker open; skipped call', retryAt, { refundAttempt: true });
     return;
   }
 
@@ -148,9 +175,15 @@ async function classifyTransaction(transaction: TransactionDocument): Promise<vo
     recordLlmSuccess();
     await finishClassification(organisationId, transactionId, result, 'ai', mockLlmProvider.name);
   } catch (error) {
+    const message = (error as Error).message;
+    if (error instanceof InvalidProviderResponseError) {
+      // The provider is up, it just answered badly, so the breaker isn't touched.
+      await handleInvalidResponse(organisationId, transaction, message);
+      return;
+    }
     recordLlmFailure();
     const retryAfterMs = error instanceof RateLimitedProviderError ? error.retryAfterMs : undefined;
-    await handleFailure(organisationId, transactionId, transaction.classification.attempts, (error as Error).message, retryAfterMs);
+    await handleUnavailable(organisationId, transaction, message, retryAfterMs);
   }
 }
 

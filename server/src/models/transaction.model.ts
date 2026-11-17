@@ -19,6 +19,7 @@ export interface TransactionCategory {
 export interface TransactionClassificationState {
   status: ClassificationStatus;
   attempts: number;
+  invalidResponses: number;
   nextAttemptAt: Date | null;
   lockedUntil: Date | null;
   lastError: string | null;
@@ -61,6 +62,10 @@ const classificationSchema = new Schema<TransactionClassificationState>(
       default: 'pending',
     },
     attempts: { type: Number, required: true, default: 0 },
+    // Only bad answers count towards giving up. An unreachable, slow or
+    // rate-limited provider says nothing about this transaction, so those
+    // failures retry until the provider is back (see classification.service.ts).
+    invalidResponses: { type: Number, required: true, default: 0 },
     nextAttemptAt: { type: Date, default: () => new Date() },
     lockedUntil: { type: Date, default: null },
     lastError: { type: String, default: null },
@@ -341,12 +346,24 @@ export async function markClassified(
   );
 }
 
+export interface RetryOptions {
+  // The claim already added 1 to attempts. A skipped call (circuit breaker
+  // open) never reached the provider, so it gives that attempt back.
+  refundAttempt?: boolean;
+  invalidResponse?: boolean;
+}
+
 export async function scheduleRetry(
   organisationId: string,
   transactionId: string,
   errorMessage: string,
   nextAttemptAt: Date,
+  options: RetryOptions = {},
 ): Promise<void> {
+  const inc: Record<string, number> = {};
+  if (options.refundAttempt) inc['classification.attempts'] = -1;
+  if (options.invalidResponse) inc['classification.invalidResponses'] = 1;
+
   await TransactionModel.updateOne(
     { organisationId, _id: transactionId },
     {
@@ -356,6 +373,7 @@ export async function scheduleRetry(
         'classification.nextAttemptAt': nextAttemptAt,
         'classification.lockedUntil': null,
       },
+      ...(Object.keys(inc).length > 0 ? { $inc: inc } : {}),
     },
   );
 }
@@ -363,8 +381,33 @@ export async function scheduleRetry(
 export async function markFailed(organisationId: string, transactionId: string, errorMessage: string): Promise<void> {
   await TransactionModel.updateOne(
     { organisationId, _id: transactionId },
-    { $set: { 'classification.status': 'failed', 'classification.lastError': errorMessage, 'classification.lockedUntil': null } },
+    {
+      $set: { 'classification.status': 'failed', 'classification.lastError': errorMessage, 'classification.lockedUntil': null },
+      $inc: { 'classification.invalidResponses': 1 },
+    },
   );
+}
+
+// attempts and invalidResponses go back to zero: a requeue is a fresh start.
+function requeueUpdate() {
+  return {
+    $set: {
+      'classification.status': 'pending',
+      'classification.attempts': 0,
+      'classification.invalidResponses': 0,
+      'classification.nextAttemptAt': new Date(),
+      'classification.lockedUntil': null,
+    },
+  };
+}
+
+/** Puts this organisation's failed transactions back in the queue, e.g. after a provider fix. */
+export async function requeueFailed(organisationId: string): Promise<number> {
+  const result = await TransactionModel.updateMany(
+    { organisationId, 'classification.status': 'failed' },
+    requeueUpdate(),
+  );
+  return result.modifiedCount;
 }
 
 /**

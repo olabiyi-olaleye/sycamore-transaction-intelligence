@@ -133,6 +133,7 @@ which Mongo only supports on a replica set.
 | `npm run typecheck` | `server/` or `web/` | Type-check without emitting |
 | `npm run seed` | `server/` | Load the sample organisations/accounts/transactions (idempotent — safe to re-run) |
 | `npm run openapi` | `server/` | Regenerate `docs/openapi.json` |
+| `npm run requeue-failed` | `server/` | Put every organisation's failed classifications back in the queue |
 | `npm run dev` | `web/` | Run the web app with hot reload |
 | `npm run build` | `web/` | Type-check and build the web app for production |
 
@@ -174,9 +175,11 @@ flowchart LR
     C -->|rule hit, confidence >= 0.9| D[("classification_events\nsource: rule")]
     C -->|no rule| E[Mock LLM provider\n5s timeout, Zod-validated output]
     E -->|success| D2[("classification_events\nsource: ai")]
-    E -->|failure, attempts < 5| F["backoff + jitter\nnextAttemptAt = now + delay"]
+    E -->|"down / timeout / rate limited\n(never gives up)"| F["backoff + jitter, capped at 60s\nnextAttemptAt = now + delay"]
+    E -->|"invalid answer, fewer than 5 so far"| F
     F --> B
-    E -->|attempts = 5| G["status: failed\n+ CLASSIFICATION_FAILED flag"]
+    E -->|"5th invalid answer"| G["status: failed\n+ CLASSIFICATION_FAILED flag"]
+    G -->|"POST /classification/retry-failed\nor npm run requeue-failed"| B
     D --> H{confidence < 0.6?}
     D2 --> H
     H -->|yes| I[("review_flags\nLOW_CONFIDENCE")]
@@ -297,12 +300,24 @@ Failure handling, all in `classification.service.ts`:
 - **5-second timeout** via `AbortController`, regardless of which `MOCK_LLM_MODE` is active.
 - **Zod-validated output** (`validation/classification.validation.ts`): an unknown category or an
   out-of-range confidence is treated as a failure, not cast.
-- **Exponential backoff with jitter** between attempts; a rate-limited response honours its
-  own `retryAfterMs` instead of the generic backoff.
-- **Max 5 attempts**, then `status: failed` and a `CLASSIFICATION_FAILED` flag.
-- **Circuit breaker**: after 5 consecutive AI failures, skip calling the provider for a 30s
-  cool-off and go straight to rescheduling — rules keep classifying the whole time. In-memory
-  and process-global; explicitly the first thing cut if time ran short (it didn't).
+- **Exponential backoff with jitter** between attempts, capped at 60s; a rate-limited
+  response honours its own `retryAfterMs` instead of the generic backoff.
+- **Two kinds of failure, treated differently.** If the provider is down, times out or rate
+  limits us, that says nothing about the transaction, so it keeps retrying for as long as
+  the outage lasts and is never marked failed. If the provider answers but the answer is
+  unusable (unknown category, confidence out of range), that counts against the
+  transaction: after 5 of those (`classification.invalidResponses`) it moves to
+  `status: failed` with a `CLASSIFICATION_FAILED` flag for a human.
+- **Circuit breaker**: after 5 consecutive outage-type failures, stop calling the provider
+  for a 30s cool-off. A transaction claimed during the cool-off is pushed back to when the
+  breaker closes (plus a few seconds of jitter) and the skipped attempt isn't counted,
+  because the provider was never called. Rules keep classifying the whole time. In-memory
+  and per-process.
+- **Getting failed rows back.** `POST /classification/retry-failed` requeues the caller's
+  organisation's failed transactions with their counters reset, and `npm run requeue-failed`
+  does the same for every organisation (one organisation at a time, through the same scoped
+  function, so the tenant guard still applies). When a requeued transaction classifies, the
+  worker resolves its `CLASSIFICATION_FAILED` flag.
 - **Ingestion never depends on any of this.** Import handlers (`transactions.service.ts`)
   never import the classification module at all — a provider outage changes nothing about
   whether `POST /transactions` succeeds, tested directly (`classification.test.ts`,
@@ -363,12 +378,18 @@ real stack rather than with a Vitest/RTL suite (see §10).
 
 **AI reliability — a six-hour outage with hundreds of thousands of transactions arriving.**
 Nothing about ingestion changes: imports keep succeeding and queue up as `pending`, because
-the import path never calls the classification provider. The worker keeps trying, but after
-five consecutive AI failures the circuit breaker stops calling the dead provider for 30s
-stretches at a time, so retries don't themselves become load on (or billed cost against) a
-service that's down — rules keep absorbing whatever volume they can the entire time. Once
-the provider recovers, the backlog drains in oldest-due-first order with no manual
-intervention needed; at "hundreds of thousands" scale a single worker process would take a
+the import path never calls the classification provider. Rules keep classifying whatever
+they match for the whole six hours. For the rest, the worker tries the provider, and after
+five consecutive failures the circuit breaker stops calling it for 30s at a time, so retries
+don't become extra load on (or billed cost against) a service that's down. Transactions
+claimed while the breaker is open are pushed back to when it closes, and those skipped calls
+don't count as attempts. An outage never marks a transaction as failed: only unusable
+answers do, so six hours of downtime doesn't turn into hundreds of thousands of
+`CLASSIFICATION_FAILED` flags for the finance team. Once the provider recovers, the backlog
+drains oldest-due-first with no manual step. If something did end up `failed` (for example
+the provider came back returning bad answers for a while),
+`POST /classification/retry-failed` or `npm run requeue-failed` puts it back in the queue.
+At "hundreds of thousands" scale a single worker process would take a
 while to catch up, so the lever to pull is running more worker replicas (safe already, since
 the claim is one atomic `findOneAndUpdate`) and watching `pendingClassificationCount` on the
 dashboard as the signal for whether to add more.

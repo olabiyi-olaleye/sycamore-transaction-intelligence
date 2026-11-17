@@ -8,6 +8,7 @@ import { accountsRoutes } from './routes/accounts.routes.js';
 import { transactionsRoutes } from './routes/transactions.routes.js';
 import { dashboardRoutes } from './routes/dashboard.routes.js';
 import { reviewRoutes } from './routes/review.routes.js';
+import { classificationRoutes } from './routes/classification.routes.js';
 import { systemRoutes } from './routes/system.routes.js';
 
 export function buildApp(): Express {
@@ -36,6 +37,7 @@ export function buildApp(): Express {
   protectedRouter.use(transactionsRoutes);
   protectedRouter.use(dashboardRoutes);
   protectedRouter.use(reviewRoutes);
+  protectedRouter.use(classificationRoutes);
   app.use('/api/v1', protectedRouter);
 
   app.use(notFoundMiddleware);

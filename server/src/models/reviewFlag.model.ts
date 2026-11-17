@@ -161,11 +161,15 @@ export async function resolveOpenFlagsForTransaction(
   types: ReviewFlagType[],
   resolvedBy: string | null,
 ): Promise<void> {
-  await ReviewFlagModel.updateMany(
+  const result = await ReviewFlagModel.updateMany(
     { organisationId, transactionId, type: { $in: types }, status: 'open' },
     { $set: { status: 'resolved', resolvedBy, resolvedAt: new Date() } },
   );
-  await syncReviewStatus(organisationId, transactionId);
+  // The worker calls this after every successful classification, so skip the
+  // extra reads when nothing actually changed.
+  if (result.modifiedCount > 0) {
+    await syncReviewStatus(organisationId, transactionId);
+  }
 }
 
 export function countOpenFlags(organisationId: string): Promise<number> {

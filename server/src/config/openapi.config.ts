@@ -385,6 +385,21 @@ export const openApiSpec = {
         },
       },
     },
+    '/classification/retry-failed': {
+      post: {
+        summary: "Requeue the caller organisation's failed classifications",
+        description:
+          'Moves every transaction with classification.status "failed" back to "pending" with its counters reset. Their CLASSIFICATION_FAILED flags are resolved by the worker as each one classifies.',
+        security: bearerAuth,
+        responses: {
+          200: {
+            description: 'OK',
+            content: { 'application/json': { schema: { type: 'object', properties: { requeued: { type: 'integer' } } } } },
+          },
+          401: errorResponses[401],
+        },
+      },
+    },
     '/dashboard/summary': {
       get: {
         summary: 'Dashboard totals for the caller organisation',

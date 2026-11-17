@@ -49,6 +49,7 @@ export interface TransactionFixtureOverrides {
   reviewStatus?: ReviewStatus;
   classificationStatus?: 'pending' | 'processing' | 'classified' | 'failed';
   attempts?: number;
+  invalidResponses?: number;
   nextAttemptAt?: Date;
   lockedUntil?: Date | null;
 }
@@ -74,6 +75,7 @@ export function createTransaction(
     classification: {
       status: overrides.classificationStatus ?? 'pending',
       attempts: overrides.attempts ?? 0,
+      invalidResponses: overrides.invalidResponses ?? 0,
       nextAttemptAt: overrides.nextAttemptAt ?? new Date(),
       lockedUntil: overrides.lockedUntil ?? null,
       lastError: null,
