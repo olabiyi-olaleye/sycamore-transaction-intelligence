@@ -1,8 +1,7 @@
 # Sycamore Transaction Intelligence Platform
 
 A multi-tenant transaction import, AI-assisted categorisation, and human review platform
-for Nigerian businesses, built for the Sycamore Capital Group technical assessment
-(the brief is in `docs/ASSESSMENT.md`).
+for Nigerian businesses, built for the Sycamore Capital Group technical assessment.
 
 I am not expected to have built a production-complete system in this time box. What follows
 explains what I built, why, and what I'd do differently with more time.
@@ -19,21 +18,49 @@ explains what I built, why, and what I'd do differently with more time.
 
 From the repository root:
 
+**1. Generate a JWT secret:**
+
 ```bash
-# 1. Copy the example env files. docker-compose.yml reads the root one for the
-#    container environment; server/.env is what npm run seed reads when run
-#    from your host instead of inside a container.
-cp .env.example .env
-cp server/.env.example server/.env
-
-# Both files need a real JWT_SECRET — generate one and paste it into both:
 node -e "console.log(require('crypto').randomBytes(64).toString('hex'))"
+```
 
-# 2. Build and start MongoDB (as a replica set), the API, the classification
-#    worker, and the web app.
+**2. Create `.env` in the repo root** (read by `docker-compose.yml` for the container
+environment) with:
+
+```
+JWT_SECRET=<paste the generated value>
+SEED_PASSWORD=Passw0rd!2024
+MOCK_LLM_MODE=ok
+MOCK_LLM_FAILURE_RATE=0
+```
+
+**3. Create `server/.env`** (read when `npm run seed` runs from your host instead of inside
+a container) with:
+
+```
+NODE_ENV=development
+PORT=4000
+MONGO_URI=mongodb://localhost:27017/sycamore?replicaSet=rs0&directConnection=true
+JWT_SECRET=<the same value as above>
+LOG_LEVEL=info
+MOCK_LLM_MODE=ok
+MOCK_LLM_FAILURE_RATE=0
+WORKER_POLL_INTERVAL_MS=1000
+WORKER_LOCK_MS=30000
+WORKER_BATCH_SIZE=10
+SEED_PASSWORD=Passw0rd!2024
+```
+
+**4. Build and start MongoDB (as a replica set), the API, the classification worker, and
+the web app:**
+
+```bash
 docker compose up -d --build
+```
 
-# 3. Load two organisations and ~400 transactions through the real import API.
+**5. Load two organisations and ~400 transactions through the real import API:**
+
+```bash
 cd server && npm run seed
 ```
 
@@ -45,7 +72,8 @@ Give the worker a few seconds to classify the newly seeded transactions, then op
 | Lagos Fresh Foods Ltd (food retail) | `adaeze.okafor@lagosfreshfoods.ng` | `Passw0rd!2024` |
 | Nimbus Cloud Systems Ltd (SaaS) | `chidi.eze@nimbuscloud.ng` | `Passw0rd!2024` |
 
-(The password is `SEED_PASSWORD` in `server/.env.example`; both seed organisations use it.)
+(The password is `Passw0rd!2024` — `SEED_PASSWORD` in `server/.env` above; both seed
+organisations use it.)
 
 **Checking it's actually up**, if anything looks wrong:
 
@@ -69,18 +97,23 @@ one service that changed, e.g. `docker compose up -d --build web`) to rebuild an
 
 ### Running without Docker
 
-```bash
-cp server/.env.example server/.env   # point MONGO_URI at your own replica set, set JWT_SECRET
-cp web/.env.example web/.env
+Create `server/.env` with the same content shown in step 3 above, but point `MONGO_URI` at
+your own replica set. Create `web/.env` with:
 
+```
+VITE_API_URL=http://localhost:4000/api/v1
+```
+
+Then:
+
+```bash
 cd server && npm install && npm run dev      # terminal 1: the API, on :4000
 cd server && npm run worker                  # terminal 2: the classification worker
 cd web && npm install && npm run dev         # terminal 3: the web app, on :5173
 ```
 
-Generate `JWT_SECRET` with `node -e "console.log(require('crypto').randomBytes(64).toString('hex'))"`
-and paste the result into `server/.env` — never commit the real value, and never hardcode it
-in source; it is read once, at startup, via `process.env.JWT_SECRET` (`server/src/config/env.ts`).
+`JWT_SECRET` is never committed and never hardcoded in source; it's read once, at startup,
+via `process.env.JWT_SECRET` (`server/src/config/env.ts`).
 
 Then, from `server/`, run `npm run seed` once to load the sample data (needs `server/.env`
 in place so it can reach your MongoDB). Your own MongoDB must be running as a replica set —
