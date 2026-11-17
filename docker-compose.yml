@@ -55,5 +55,23 @@ services:
       - "4000:4000"
     command: ["npx", "tsx", "src/http/server.ts"]
 
+  worker:
+    build: ./api
+    depends_on:
+      mongo-init:
+        condition: service_completed_successfully
+    environment:
+      NODE_ENV: development
+      PORT: "4001"
+      MONGO_URI: "mongodb://mongo:27017/sycamore?replicaSet=rs0"
+      JWT_SECRET: "dev-only-secret-change-me"
+      LOG_LEVEL: "info"
+      MOCK_LLM_MODE: "ok"
+      MOCK_LLM_FAILURE_RATE: "0"
+      WORKER_POLL_INTERVAL_MS: "1000"
+      WORKER_LOCK_MS: "30000"
+      SEED_PASSWORD: "Passw0rd!2024"
+    command: ["npx", "tsx", "src/worker/index.ts"]
+
 volumes:
   mongo-data:

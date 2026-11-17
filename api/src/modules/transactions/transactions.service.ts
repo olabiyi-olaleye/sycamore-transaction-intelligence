@@ -1,5 +1,7 @@
 import mongoose from 'mongoose';
 import { findAccountById } from '../accounts/accounts.repository.js';
+import { listEventsForTransaction } from '../classification/classification.repository.js';
+import { listFlagsForTransaction } from '../review/review.repository.js';
 import { ConflictError, NotFoundError } from '../../http/errors.js';
 import { formatKoboAsAmount, parseAmountToKobo, parseFilterAmountToKobo } from '../../money/money.js';
 import type { TransactionDocument } from '../../db/models/transaction.model.js';
@@ -217,10 +219,30 @@ export async function listTransactionsView(
   return { transactions: transactions.map(toView), nextCursor };
 }
 
+export interface ClassificationHistoryEntry {
+  source: string;
+  provider: string;
+  category: string;
+  previousCategory: string | null;
+  confidence: number | null;
+  reason: string;
+  actorUserId: string | null;
+  note: string | null;
+  createdAt: string;
+}
+
+export interface TransactionFlagView {
+  id: string;
+  type: string;
+  reason: string;
+  status: string;
+  createdAt: string;
+  resolvedAt: string | null;
+}
+
 export interface TransactionDetailView extends TransactionView {
-  // Populated once the classification and review modules exist (stages 5-6).
-  classificationHistory: unknown[];
-  flags: unknown[];
+  classificationHistory: ClassificationHistoryEntry[];
+  flags: TransactionFlagView[];
 }
 
 export async function getTransactionDetail(organisationId: string, transactionId: string): Promise<TransactionDetailView> {
@@ -231,5 +253,32 @@ export async function getTransactionDetail(organisationId: string, transactionId
   if (!transaction) {
     throw new NotFoundError('Transaction not found');
   }
-  return { ...toView(transaction), classificationHistory: [], flags: [] };
+
+  const [events, flags] = await Promise.all([
+    listEventsForTransaction(organisationId, transactionId),
+    listFlagsForTransaction(organisationId, transactionId),
+  ]);
+
+  return {
+    ...toView(transaction),
+    classificationHistory: events.map((event) => ({
+      source: event.source,
+      provider: event.provider,
+      category: event.category,
+      previousCategory: event.previousCategory,
+      confidence: event.confidence,
+      reason: event.reason,
+      actorUserId: event.actorUserId ? event.actorUserId.toString() : null,
+      note: event.note,
+      createdAt: event.createdAt.toISOString(),
+    })),
+    flags: flags.map((flag) => ({
+      id: flag._id.toString(),
+      type: flag.type,
+      reason: flag.reason,
+      status: flag.status,
+      createdAt: flag.createdAt.toISOString(),
+      resolvedAt: flag.resolvedAt ? flag.resolvedAt.toISOString() : null,
+    })),
+  };
 }

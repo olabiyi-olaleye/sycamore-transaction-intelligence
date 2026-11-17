@@ -48,6 +48,9 @@ export interface TransactionFixtureOverrides {
   category?: { value: Category; source: 'rule' | 'ai' | 'human'; confidence: number } | null;
   reviewStatus?: ReviewStatus;
   classificationStatus?: 'pending' | 'processing' | 'classified' | 'failed';
+  attempts?: number;
+  nextAttemptAt?: Date;
+  lockedUntil?: Date | null;
 }
 
 // Bypasses the import endpoint: seeds rows directly so read-API tests can
@@ -68,7 +71,13 @@ export function createTransaction(
     merchant: overrides.merchant ?? null,
     date: overrides.date,
     category: overrides.category ? { ...overrides.category, eventId: new Types.ObjectId() } : null,
-    classification: { status: overrides.classificationStatus ?? 'pending', attempts: 0, nextAttemptAt: new Date(), lockedUntil: null, lastError: null },
+    classification: {
+      status: overrides.classificationStatus ?? 'pending',
+      attempts: overrides.attempts ?? 0,
+      nextAttemptAt: overrides.nextAttemptAt ?? new Date(),
+      lockedUntil: overrides.lockedUntil ?? null,
+      lastError: null,
+    },
     reviewStatus: overrides.reviewStatus ?? 'none',
   });
 }
