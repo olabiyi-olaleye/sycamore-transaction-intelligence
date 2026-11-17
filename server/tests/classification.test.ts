@@ -1,0 +1,352 @@
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import request from 'supertest';
+import { TransactionModel } from '../src/models/transaction.model.js';
+import { ReviewFlagModel } from '../src/models/reviewFlag.model.js';
+import { buildApp } from '../src/app.js';
+import { processOneClaimedTransaction, resetCircuitBreakerForTests } from '../src/services/classification/classification.service.js';
+import { setMockLlmFailureRate, setMockLlmMode } from '../src/services/classification/mockLlmProvider.js';
+import { createAccount, createOrganisation, createTransaction, createUser, uniqueEmail } from './fixtures.js';
+
+function wait(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+// The worker's claim is deliberately global across every organisation, and
+// this suite shares one persistent database with every other test file, so
+// anything left `pending` by an earlier file is claimable here too. Draining
+// the queue in 'ok' mode before each test (which always succeeds instantly)
+// guarantees the next claim is whichever transaction *this* test just made.
+async function drainQueue(): Promise<void> {
+  setMockLlmMode('ok');
+  setMockLlmFailureRate(0);
+  for (let i = 0; i < 2000; i += 1) {
+    const outcome = await processOneClaimedTransaction();
+    if (outcome === 'empty') return;
+  }
+  throw new Error('drainQueue did not terminate — something is stuck retrying');
+}
+
+beforeEach(async () => {
+  resetCircuitBreakerForTests();
+  await drainQueue();
+});
+
+afterEach(() => {
+  setMockLlmMode('ok');
+  setMockLlmFailureRate(0);
+  resetCircuitBreakerForTests();
+});
+
+async function setupOrgAndAccount() {
+  const org = await createOrganisation('Classification Test Co');
+  const account = await createAccount(org._id.toString());
+  return { orgId: org._id.toString(), accountId: account._id.toString() };
+}
+
+describe('rules-based classification', () => {
+  it('classifies a salary payment as PAYROLL via rules, without calling the AI provider', async () => {
+    const { orgId, accountId } = await setupOrgAndAccount();
+    const tx = await createTransaction(orgId, {
+      accountId,
+      amountKobo: 50000000n,
+      direction: 'debit',
+      narration: 'Monthly SALARY payment - March',
+      date: new Date(),
+    });
+
+    setMockLlmMode('down'); // if this got called instead of a rule, the test would fail
+    const outcome = await processOneClaimedTransaction();
+    expect(outcome).toBe('claimed');
+
+    const reread = await TransactionModel.findOne({ organisationId: orgId, _id: tx._id }).lean();
+    expect(reread?.classification.status).toBe('classified');
+    expect(reread?.category?.value).toBe('PAYROLL');
+    expect(reread?.category?.source).toBe('rule');
+    expect(reread?.category?.confidence).toBeGreaterThanOrEqual(0.9);
+  });
+});
+
+describe('AI classification and each mock failure mode', () => {
+  it('classifies via the AI provider when no rule matches, in "ok" mode', async () => {
+    const { orgId, accountId } = await setupOrgAndAccount();
+    const tx = await createTransaction(orgId, {
+      accountId,
+      amountKobo: 15000n,
+      direction: 'debit',
+      narration: 'Miscellaneous vendor payment xyz',
+      date: new Date(),
+    });
+
+    setMockLlmMode('ok');
+    await processOneClaimedTransaction();
+
+    const reread = await TransactionModel.findOne({ organisationId: orgId, _id: tx._id }).lean();
+    expect(reread?.classification.status).toBe('classified');
+    expect(reread?.category?.source).toBe('ai');
+  });
+
+  it('"down": the attempt fails, the transaction stays unclassified and is rescheduled', async () => {
+    const { orgId, accountId } = await setupOrgAndAccount();
+    const tx = await createTransaction(orgId, {
+      accountId,
+      amountKobo: 15000n,
+      direction: 'debit',
+      narration: 'Miscellaneous vendor payment abc',
+      date: new Date(),
+    });
+
+    setMockLlmMode('down');
+    await processOneClaimedTransaction();
+
+    const reread = await TransactionModel.findOne({ organisationId: orgId, _id: tx._id }).lean();
+    expect(reread?.classification.status).toBe('pending');
+    expect(reread?.classification.attempts).toBe(1);
+    expect(reread?.classification.lastError).toMatch(/unavailable/i);
+    expect(reread?.classification.nextAttemptAt?.getTime()).toBeGreaterThan(Date.now());
+  });
+
+  it('"rate_limited": the next attempt is scheduled using the provider\'s retry-after', async () => {
+    const { orgId, accountId } = await setupOrgAndAccount();
+    const tx = await createTransaction(orgId, {
+      accountId,
+      amountKobo: 15000n,
+      direction: 'debit',
+      narration: 'Miscellaneous vendor payment def',
+      date: new Date(),
+    });
+
+    const before = Date.now();
+    setMockLlmMode('rate_limited');
+    await processOneClaimedTransaction();
+
+    const reread = await TransactionModel.findOne({ organisationId: orgId, _id: tx._id }).lean();
+    expect(reread?.classification.status).toBe('pending');
+    expect(reread?.classification.lastError).toMatch(/rate limit/i);
+    const delay = (reread?.classification.nextAttemptAt?.getTime() ?? 0) - before;
+    expect(delay).toBeGreaterThan(1500);
+    expect(delay).toBeLessThan(3000);
+  });
+
+  it('"invalid": a malformed provider response is rejected by Zod, not trusted', async () => {
+    const { orgId, accountId } = await setupOrgAndAccount();
+    const tx = await createTransaction(orgId, {
+      accountId,
+      amountKobo: 15000n,
+      direction: 'debit',
+      narration: 'Miscellaneous vendor payment ghi',
+      date: new Date(),
+    });
+
+    setMockLlmMode('invalid');
+    await processOneClaimedTransaction();
+
+    const reread = await TransactionModel.findOne({ organisationId: orgId, _id: tx._id }).lean();
+    expect(reread?.classification.status).toBe('pending');
+    expect(reread?.classification.lastError).toMatch(/malformed/i);
+  });
+
+  it('"slow": a response past the 5s timeout is treated as a failure', async () => {
+    const { orgId, accountId } = await setupOrgAndAccount();
+    const tx = await createTransaction(orgId, {
+      accountId,
+      amountKobo: 15000n,
+      direction: 'debit',
+      narration: 'Miscellaneous vendor payment jkl',
+      date: new Date(),
+    });
+
+    setMockLlmMode('slow');
+    await processOneClaimedTransaction();
+
+    const reread = await TransactionModel.findOne({ organisationId: orgId, _id: tx._id }).lean();
+    expect(reread?.classification.status).toBe('pending');
+    expect(reread?.classification.attempts).toBe(1);
+  }, 10000);
+});
+
+describe('retry exhaustion', () => {
+  it('fails after 5 attempts and raises a CLASSIFICATION_FAILED flag', async () => {
+    const { orgId, accountId } = await setupOrgAndAccount();
+    const tx = await createTransaction(orgId, {
+      accountId,
+      amountKobo: 15000n,
+      direction: 'debit',
+      narration: 'Miscellaneous vendor payment mno',
+      date: new Date(),
+      attempts: 4, // the claim about to happen will be the 5th
+    });
+
+    setMockLlmMode('down');
+    await processOneClaimedTransaction();
+
+    const reread = await TransactionModel.findOne({ organisationId: orgId, _id: tx._id }).lean();
+    expect(reread?.classification.status).toBe('failed');
+    expect(reread?.classification.attempts).toBe(5);
+
+    const flag = await ReviewFlagModel.findOne({ organisationId: orgId, transactionId: tx._id }).lean();
+    expect(flag?.type).toBe('CLASSIFICATION_FAILED');
+    expect(flag?.status).toBe('open');
+    expect(flag?.reason).toContain('5 attempts');
+  });
+});
+
+describe('low-confidence classification', () => {
+  it('raises a LOW_CONFIDENCE flag when the AI provider is unsure', async () => {
+    const { orgId, accountId } = await setupOrgAndAccount();
+    // The mock LLM's confidence is a deterministic function of narration text;
+    // this one happens to land under the 0.6 threshold.
+    let flagged = false;
+    for (let attempt = 0; attempt < 20 && !flagged; attempt += 1) {
+      const narration = `Unclassifiable vendor charge seed-${attempt}`;
+      const tx = await createTransaction(orgId, { accountId, amountKobo: 15000n, direction: 'debit', narration, date: new Date() });
+      setMockLlmMode('ok');
+      await processOneClaimedTransaction();
+      const reread = await TransactionModel.findOne({ organisationId: orgId, _id: tx._id }).lean();
+      if ((reread?.category?.confidence ?? 1) < 0.6) {
+        const flag = await ReviewFlagModel.findOne({ organisationId: orgId, transactionId: tx._id }).lean();
+        expect(flag?.type).toBe('LOW_CONFIDENCE');
+        expect(flag?.reason).toContain('confidence');
+        flagged = true;
+      }
+    }
+    expect(flagged).toBe(true);
+  });
+});
+
+describe('crashed worker recovery', () => {
+  it('reclaims a transaction stuck "processing" with an expired lock', async () => {
+    const { orgId, accountId } = await setupOrgAndAccount();
+    const tx = await createTransaction(orgId, {
+      accountId,
+      amountKobo: 50000000n,
+      direction: 'debit',
+      narration: 'Monthly SALARY payment - crashed worker case',
+      date: new Date(),
+      classificationStatus: 'processing',
+      attempts: 1,
+      lockedUntil: new Date(Date.now() - 1000), // expired a second ago
+    });
+
+    const outcome = await processOneClaimedTransaction();
+    expect(outcome).toBe('claimed');
+
+    const reread = await TransactionModel.findOne({ organisationId: orgId, _id: tx._id }).lean();
+    expect(reread?.classification.status).toBe('classified');
+    expect(reread?.classification.attempts).toBe(2);
+  });
+
+  it('does not reclaim a transaction whose lock has not expired yet', async () => {
+    const { orgId, accountId } = await setupOrgAndAccount();
+    await createTransaction(orgId, {
+      accountId,
+      amountKobo: 50000000n,
+      direction: 'debit',
+      narration: 'Still locked, do not touch',
+      date: new Date(),
+      classificationStatus: 'processing',
+      attempts: 1,
+      lockedUntil: new Date(Date.now() + 60_000),
+    });
+
+    const outcome = await processOneClaimedTransaction();
+    expect(outcome).toBe('empty');
+  });
+});
+
+describe('circuit breaker', () => {
+  it('stops calling a consistently-down provider after 5 consecutive failures, while rules keep working', async () => {
+    const { orgId, accountId } = await setupOrgAndAccount();
+    setMockLlmMode('down');
+
+    for (let i = 0; i < 5; i += 1) {
+      await createTransaction(orgId, { accountId, amountKobo: 1000n, direction: 'debit', narration: `Breaker warm-up ${i}`, date: new Date() });
+    }
+    for (let i = 0; i < 5; i += 1) {
+      await processOneClaimedTransaction();
+    }
+
+    const sixth = await createTransaction(orgId, { accountId, amountKobo: 1000n, direction: 'debit', narration: 'Breaker should trip here', date: new Date() });
+    await processOneClaimedTransaction();
+    const sixthReread = await TransactionModel.findOne({ organisationId: orgId, _id: sixth._id }).lean();
+    expect(sixthReread?.classification.lastError).toMatch(/circuit breaker/i);
+
+    // Rules do not go through the breaker at all.
+    const ruleTx = await createTransaction(orgId, { accountId, amountKobo: 50000000n, direction: 'debit', narration: 'SALARY payment while breaker is open', date: new Date() });
+    await processOneClaimedTransaction();
+    const ruleReread = await TransactionModel.findOne({ organisationId: orgId, _id: ruleTx._id }).lean();
+    expect(ruleReread?.classification.status).toBe('classified');
+    expect(ruleReread?.category?.source).toBe('rule');
+  });
+});
+
+describe('ingestion does not depend on AI', () => {
+  it('still returns 201 for a new import while the mock provider is down', async () => {
+    setMockLlmMode('down');
+    const password = 'classification-ingestion-password';
+    const org = await createOrganisation('Ingestion During Outage Co');
+    const email = uniqueEmail('ingestion-outage');
+    await createUser(org._id.toString(), { email, password });
+    const account = await createAccount(org._id.toString());
+
+    const app = buildApp();
+    const loginResponse = await request(app).post('/api/v1/auth/login').send({ email, password });
+    const { token } = loginResponse.body;
+
+    const response = await request(app)
+      .post('/api/v1/transactions')
+      .set('authorization', `Bearer ${token}`)
+      .send({
+        accountId: account._id.toString(),
+        externalReference: 'outage-1',
+        amount: '500.00',
+        direction: 'debit',
+        currency: 'NGN',
+        narration: 'Import during outage',
+        date: '2024-05-01',
+      });
+
+    expect(response.status).toBe(201);
+    expect(response.body.classification.status).toBe('pending');
+  });
+});
+
+describe('backlog drains once the provider recovers', () => {
+  it('rows stuck pending during an outage all classify once the mode returns to ok', async () => {
+    const { orgId, accountId } = await setupOrgAndAccount();
+    setMockLlmMode('down');
+
+    const created = await Promise.all(
+      Array.from({ length: 3 }, (_, i) =>
+        createTransaction(orgId, { accountId, amountKobo: 1000n, direction: 'debit', narration: `Outage backlog row ${i}-${Date.now()}`, date: new Date() }),
+      ),
+    );
+
+    for (let i = 0; i < 3; i += 1) {
+      await processOneClaimedTransaction();
+    }
+
+    const stillPending = await TransactionModel.find({ organisationId: orgId, _id: { $in: created.map((c) => c._id) } }).lean();
+    expect(stillPending.every((tx) => tx.classification.status === 'pending')).toBe(true);
+    expect(await processOneClaimedTransaction()).toBe('empty'); // nothing due yet — backoff hasn't elapsed
+
+    setMockLlmMode('ok');
+    await wait(2600); // past the first backoff window
+
+    // Other test files' leftover retries can become due in the same window
+    // and queue-jump ours (earlier nextAttemptAt claims first) — drain
+    // through those too rather than assuming our 3 claims are next.
+    const ids = created.map((c) => c._id);
+    for (let i = 0; i < 30; i += 1) {
+      const remaining = await TransactionModel.countDocuments({
+        organisationId: orgId,
+        _id: { $in: ids },
+        'classification.status': { $ne: 'classified' },
+      });
+      if (remaining === 0) break;
+      await processOneClaimedTransaction();
+    }
+
+    const final = await TransactionModel.find({ organisationId: orgId, _id: { $in: ids } }).lean();
+    expect(final.every((tx) => tx.classification.status === 'classified')).toBe(true);
+  }, 10000);
+});

@@ -36,7 +36,7 @@ services:
         '
 
   api:
-    build: ./api
+    build: ./server
     depends_on:
       mongo-init:
         condition: service_completed_successfully
@@ -44,19 +44,19 @@ services:
       NODE_ENV: development
       PORT: "4000"
       MONGO_URI: "mongodb://mongo:27017/sycamore?replicaSet=rs0"
-      JWT_SECRET: "dev-only-secret-change-me"
+      JWT_SECRET: "${JWT_SECRET}"
       LOG_LEVEL: "info"
-      MOCK_LLM_MODE: "ok"
-      MOCK_LLM_FAILURE_RATE: "0"
+      MOCK_LLM_MODE: "${MOCK_LLM_MODE}"
+      MOCK_LLM_FAILURE_RATE: "${MOCK_LLM_FAILURE_RATE}"
       WORKER_POLL_INTERVAL_MS: "1000"
       WORKER_LOCK_MS: "30000"
-      SEED_PASSWORD: "Passw0rd!2024"
+      SEED_PASSWORD: "${SEED_PASSWORD}"
     ports:
       - "4000:4000"
-    command: ["npx", "tsx", "src/http/server.ts"]
+    command: ["npx", "tsx", "src/index.ts"]
 
   worker:
-    build: ./api
+    build: ./server
     depends_on:
       mongo-init:
         condition: service_completed_successfully
@@ -64,14 +64,14 @@ services:
       NODE_ENV: development
       PORT: "4001"
       MONGO_URI: "mongodb://mongo:27017/sycamore?replicaSet=rs0"
-      JWT_SECRET: "dev-only-secret-change-me"
+      JWT_SECRET: "${JWT_SECRET}"
       LOG_LEVEL: "info"
-      MOCK_LLM_MODE: "ok"
-      MOCK_LLM_FAILURE_RATE: "0"
+      MOCK_LLM_MODE: "${MOCK_LLM_MODE}"
+      MOCK_LLM_FAILURE_RATE: "${MOCK_LLM_FAILURE_RATE}"
       WORKER_POLL_INTERVAL_MS: "1000"
       WORKER_LOCK_MS: "30000"
-      SEED_PASSWORD: "Passw0rd!2024"
-    command: ["npx", "tsx", "src/worker/index.ts"]
+      SEED_PASSWORD: "${SEED_PASSWORD}"
+    command: ["npx", "tsx", "src/worker.ts"]
 
   web:
     build: ./web

@@ -20,16 +20,21 @@ explains what I built, why, and what I'd do differently with more time.
 From the repository root:
 
 ```bash
-# 1. Copy the example env file. docker-compose.yml configures the containers
-#    itself, but this is also what npm run seed reads when run from your host.
-cp api/.env.example api/.env
+# 1. Copy the example env files. docker-compose.yml reads the root one for the
+#    container environment; server/.env is what npm run seed reads when run
+#    from your host instead of inside a container.
+cp .env.example .env
+cp server/.env.example server/.env
+
+# Both files need a real JWT_SECRET — generate one and paste it into both:
+node -e "console.log(require('crypto').randomBytes(64).toString('hex'))"
 
 # 2. Build and start MongoDB (as a replica set), the API, the classification
 #    worker, and the web app.
 docker compose up -d --build
 
 # 3. Load two organisations and ~400 transactions through the real import API.
-cd api && npm run seed
+cd server && npm run seed
 ```
 
 Give the worker a few seconds to classify the newly seeded transactions, then open
@@ -40,7 +45,7 @@ Give the worker a few seconds to classify the newly seeded transactions, then op
 | Lagos Fresh Foods Ltd (food retail) | `adaeze.okafor@lagosfreshfoods.ng` | `Passw0rd!2024` |
 | Nimbus Cloud Systems Ltd (SaaS) | `chidi.eze@nimbuscloud.ng` | `Passw0rd!2024` |
 
-(The password is `SEED_PASSWORD` in `api/.env.example`; both seed organisations use it.)
+(The password is `SEED_PASSWORD` in `server/.env.example`; both seed organisations use it.)
 
 **Checking it's actually up**, if anything looks wrong:
 
@@ -65,15 +70,19 @@ one service that changed, e.g. `docker compose up -d --build web`) to rebuild an
 ### Running without Docker
 
 ```bash
-cp api/.env.example api/.env       # point MONGO_URI at your own replica set
+cp server/.env.example server/.env   # point MONGO_URI at your own replica set, set JWT_SECRET
 cp web/.env.example web/.env
 
-cd api && npm install && npm run dev      # terminal 1: the API, on :4000
-cd api && npm run worker                  # terminal 2: the classification worker
-cd web && npm install && npm run dev      # terminal 3: the web app, on :5173
+cd server && npm install && npm run dev      # terminal 1: the API, on :4000
+cd server && npm run worker                  # terminal 2: the classification worker
+cd web && npm install && npm run dev         # terminal 3: the web app, on :5173
 ```
 
-Then, from `api/`, run `npm run seed` once to load the sample data (needs the API's `.env`
+Generate `JWT_SECRET` with `node -e "console.log(require('crypto').randomBytes(64).toString('hex'))"`
+and paste the result into `server/.env` — never commit the real value, and never hardcode it
+in source; it is read once, at startup, via `process.env.JWT_SECRET` (`server/src/config/env.ts`).
+
+Then, from `server/`, run `npm run seed` once to load the sample data (needs `server/.env`
 in place so it can reach your MongoDB). Your own MongoDB must be running as a replica set —
 even a single-node one — because the correction endpoint uses a multi-document transaction,
 which Mongo only supports on a replica set.
@@ -85,30 +94,37 @@ which Mongo only supports on a replica set.
 | `docker compose up -d --build` | repo root | Build and start everything |
 | `docker compose down` | repo root | Stop everything |
 | `docker compose logs -f api\|worker\|web\|mongo` | repo root | Tail one service's logs |
-| `npm run dev` | `api/` | Run the API with hot reload |
-| `npm run worker` | `api/` | Run the classification worker |
-| `npm test` | `api/` | Run the API test suite (needs Mongo reachable) |
-| `npm run typecheck` | `api/` or `web/` | Type-check without emitting |
-| `npm run seed` | `api/` | Load the sample organisations/accounts/transactions (idempotent — safe to re-run) |
-| `npm run openapi` | `api/` | Regenerate `docs/openapi.json` |
+| `npm run dev` | `server/` | Run the API with hot reload |
+| `npm run worker` | `server/` | Run the classification worker |
+| `npm test` | `server/` | Run the API test suite (needs Mongo reachable) |
+| `npm run typecheck` | `server/` or `web/` | Type-check without emitting |
+| `npm run seed` | `server/` | Load the sample organisations/accounts/transactions (idempotent — safe to re-run) |
+| `npm run openapi` | `server/` | Regenerate `docs/openapi.json` |
 | `npm run dev` | `web/` | Run the web app with hot reload |
 | `npm run build` | `web/` | Type-check and build the web app for production |
 
 ## 2. Architecture
 
 ```
-api/src/
-  config/        env parsing; the process exits on invalid config
-  http/          Fastify app, auth hook, request context, global error handler
-  db/            connection, tenant-guard plugin, Mongoose models
-  money/         kobo parsing/formatting — the only module that touches amount arithmetic
-  modules/
-    auth/ accounts/ transactions/ classification/ review/ dashboard/
-      *.routes.ts    parses the request, calls the service, sends the response
-      *.service.ts   the rules: idempotency, tenant checks, orchestration
-      *.repository.ts  the only code that touches Mongoose
-  worker/        the classification claim loop
+server/src/
+  config/        env parsing, DB connection, OpenAPI spec; the process exits on invalid config
+  constants/     the fixed category list
+  context/       AsyncLocalStorage-based request context (organisationId, userId, role)
+  controllers/   parses the request, calls the service, sends the response
+  middleware/    request id, JWT auth, login rate limiting, the global error handler
+  models/        Mongoose schemas plus the data-access functions for each collection
+                 (no separate repository layer; services never import Mongoose directly)
+  routes/        Express Router() wiring per resource
+  services/      the rules: idempotency, tenant checks, orchestration
+    auth/        argon2 verify + JWT sign/verify
+    classification/  rules engine, mock LLM provider, the worker's claim loop
+    review/      duplicate/large-payment detectors
   seed/          deterministic seed data, loaded through the real import service
+  utils/         money (kobo) parsing/formatting, cursor encoding, typed errors
+  validation/    Zod schemas at the HTTP boundary
+  app.ts         builds the Express app: middleware, routes, error handling
+  index.ts       API process entry point
+  worker.ts      worker process entry point
 web/src/
   api/           typed fetch client
   auth/          token + user in localStorage
@@ -143,19 +159,22 @@ category.
 
 ## 3. Decisions and why
 
-- **Fastify** over Express/NestJS: first-class TypeScript, and route *encapsulation* is
-  exactly what scopes the auth hook to protected routes without a decorator or middleware
-  array — `app.register(async (protectedApp) => {...}, { prefix: '/api/v1' })` adds the hook
-  only inside that closure (`api/src/http/app.ts`).
+- **Express** over Fastify/NestJS: the most widely known Node HTTP framework, with a
+  middleware model that maps directly onto the three-layer tenant isolation design — a
+  public router, then a second `Router()` with `authMiddleware` mounted on it before any
+  protected route, so the auth check lives in exactly one place (`server/src/app.ts`). The
+  one thing Fastify gives for free that Express doesn't is forwarding a rejected promise from
+  an async handler to the error middleware; `utils/asyncHandler.ts` wraps every controller to
+  cover that gap.
 - **MongoDB** for financial data: the honest case against it is that it enforces nothing
   about tenant isolation, referential integrity, or numeric precision on its own — three
   specific gaps, each covered by something explicit rather than by convention:
-  - Tenant isolation: a Mongoose plugin (`db/tenantPlugin.ts`) throws on any query/update/
+  - Tenant isolation: a Mongoose plugin (`models/tenantPlugin.ts`) throws on any query/update/
     aggregate against a tenant collection with no `organisationId` in the filter.
   - Numeric precision: amounts are stored as 64-bit `Long`, never `Double`; see §4.
   - Referential integrity (nothing stops an `accountId` pointing at a deleted account): the
-    repository layer is the only code that writes, and every write path that creates a
-    transaction first confirms the account exists in the caller's organisation.
+    data-access functions in `models/` are the only code that writes, and every write path
+    that creates a transaction first confirms the account exists in the caller's organisation.
   What Mongo *does* give for free that mattered: a document model that fits "a transaction
   carries its own classification state" far more naturally than a normalized row would, and
   multi-document transactions (replica set required — that's why `docker-compose.yml`'s
@@ -163,7 +182,7 @@ category.
   (a correction).
 - **No external queue.** The transaction document *is* the queue entry: `classification.
   {status, attempts, nextAttemptAt, lockedUntil}` plus one atomic `findOneAndUpdate` claim
-  (`classification.repository.ts`) gets retry, backoff, and crash recovery (an expired lock
+  (`models/transaction.model.ts`) gets retry, backoff, and crash recovery (an expired lock
   gets reclaimed) without running or operating Redis/SQS/RabbitMQ. The cost: no priority
   ordering beyond "oldest due first," and polling (`WORKER_POLL_INTERVAL_MS`) instead of a
   push. See design scenario 3 for where this stops being the right call.
@@ -177,13 +196,13 @@ Worked example: **₦12,999.75**.
 
 1. The API rejects anything that isn't a string matching `^\d+(\.\d{1,2})?$` — a JSON number
    (`12999.75`) is rejected with a message saying why, not silently coerced.
-2. `parseAmountToKobo` (`api/src/money/money.ts`) splits on the decimal point and combines
+2. `parseAmountToKobo` (`server/src/utils/money.ts`) splits on the decimal point and combines
    with `bigint` multiplication: `12999n * 100n + 75n = 1299975n`. No `parseFloat`, no
    `Number()`, no `* 100`.
 3. Stored as `Schema.Types.BigInt` → BSON `Long`. The driver is configured with
-   `useBigInt64: true` (`db/connection.ts`), so it round-trips back out as a native
+   `useBigInt64: true` (`config/database.ts`), so it round-trips back out as a native
    `bigint`, not the `mongodb.Long` wrapper object — proved with a test that stores and
-   rereads a value above `Number.MAX_SAFE_INTEGER` (`test/ingestion.test.ts`).
+   rereads a value above `Number.MAX_SAFE_INTEGER` (`tests/ingestion.test.ts`).
 4. Summed in aggregation (dashboard totals, spending by category) as `Long` the whole way —
    MongoDB's `$sum` over an integer BSON type stays integer server-side, and `useBigInt64`
    is what brings that back as `bigint` client-side instead of silently widening to a
@@ -195,7 +214,8 @@ One real bug came out of this area, worth remembering: `Model.aggregate()` does 
 `$match` against the schema the way `Model.find()` does. Passing the plain string `organisationId`
 into an aggregation pipeline's `$match` compared it against a stored `ObjectId` and matched
 nothing — every dashboard total came back `0`, silently, for every organisation. Fixed with
-an explicit `new mongoose.Types.ObjectId(organisationId)` in `dashboard.repository.ts`.
+an explicit `new mongoose.Types.ObjectId(organisationId)` in `models/transaction.model.ts`'s
+`summarizeTransactions`.
 
 The web app only ever formats these decimal strings (`web/src/money/money.ts`); the one
 place it compares amounts by magnitude (sizing a spending bar) does the comparison in
@@ -206,19 +226,19 @@ exact integer with nothing to lose.
 
 Three layers, as specified:
 
-1. **Request context.** `organisationId` is set exactly once, in `authHook.ts`, from the
-   verified JWT's claim — never read from a body, query string, or path parameter.
+1. **Request context.** `organisationId` is set exactly once, in `middleware/auth.middleware.ts`,
+   from the verified JWT's claim — never read from a body, query string, or path parameter.
    `requireOrganisationId()` is the only way code gets it.
-2. **Repositories.** Every repository function takes `organisationId` as a required first
-   argument and puts it in the filter.
+2. **Models.** Every data-access function in `models/` takes `organisationId` as a required
+   first argument and puts it in the filter.
 3. **The Mongoose plugin backstop.** `tenantScopePlugin` throws on any `find`/`update`/
    `aggregate`/`save`/`insertMany` against a tenant collection (`accounts`, `transactions`,
    `classification_events`, `review_flags`) with no `organisationId` in the filter — a
-   second line of defence if a repository mistake ever shipped.
+   second line of defence if a model-layer mistake ever shipped.
 
 **One documented exception each way:**
 
-- The worker's claim query (`classification.repository.ts`'s `claimNextTransaction`) is the
+- The worker's claim query (`models/transaction.model.ts`'s `claimNextTransaction`) is the
   one explicit, commented bypass of the plugin — by design it looks across every
   organisation at once, since it doesn't yet know which organisation's transaction is next.
 - `users` carries `organisationId` like every other tenant collection, but is **not**
@@ -233,7 +253,7 @@ accounts, transactions, review flags, and corrections.
 
 ## 6. AI reliability
 
-`ClassificationProvider` (`modules/classification/provider.ts`) is a small interface — one
+`ClassificationProvider` (`services/classification/provider.ts`) is a small interface — one
 `classify(input, signal)` method — so the AI backend can be swapped (mock today, a real
 vendor later) without touching the worker, the retry logic, or anything upstream. Rules are
 deliberately *not* an implementation of it; they're a synchronous pre-filter that runs
@@ -242,7 +262,7 @@ first and never needs swapping.
 Failure handling, all in `classification.service.ts`:
 
 - **5-second timeout** via `AbortController`, regardless of which `MOCK_LLM_MODE` is active.
-- **Zod-validated output** (`classification.schema.ts`): an unknown category or an
+- **Zod-validated output** (`validation/classification.validation.ts`): an unknown category or an
   out-of-range confidence is treated as a failure, not cast.
 - **Exponential backoff with jitter** between attempts; a rate-limited response honours its
   own `retryAfterMs` instead of the generic backoff.
@@ -262,17 +282,17 @@ restart.
 
 ## 7. Testing
 
-85 tests, Vitest, Fastify `inject`, against a real MongoDB replica set (no mocked database).
-`api/test/setup.ts` connects once per run; most fixtures use a fresh organisation/user per
-test so tests never depend on execution order — the one exception is
-`classification.test.ts`, which documents at the top of the file why it drains the worker's
-globally-shared claim queue before each test.
+85 tests, Vitest, `supertest` against the Express app, run against a real MongoDB replica
+set (no mocked database). `server/tests/setup.ts` connects once per run; most fixtures use a
+fresh organisation/user per test so tests never depend on execution order — the one
+exception is `classification.test.ts`, which documents at the top of the file why it drains
+the worker's globally-shared claim queue before each test.
 
 ```
-cd api
+cd server
 docker compose up -d mongo mongo-init    # from the repo root, or use the full stack
-npm test                                  # everything
-npm test -- test/classification.test.ts   # one file
+npm test                                   # everything
+npm test -- tests/classification.test.ts   # one file
 npm run typecheck
 ```
 
@@ -301,7 +321,7 @@ real stack rather than with a Vitest/RTL suite (see §10).
 - **Seed volume** is ~400 transactions total (193 + 202) across two organisations over three
   months — comfortably "a few hundred" in aggregate, on the lower end of that phrase read
   per-organisation. Generating more would be a matter of widening the weekly loops in
-  `api/src/seed/generateTransactions.ts`, not a design change.
+  `server/src/seed/generateTransactions.ts`, not a design change.
 - **No admin/invite flow.** Organisations, users, and accounts only exist via the seed
   script or direct database access; there's no `POST /organisations` or `POST /users`. Out
   of scope for what the brief asks the API to do.
@@ -357,8 +377,9 @@ and if it's just sitting there un-mined, that's the real process gap to close.
 ## 10. Unfinished work and possible next steps
 
 - Hand-maintained OpenAPI spec (`docs/openapi.json`, `GET /docs`) rather than generated from
-  the Zod schemas — `fastify-type-provider-zod` would close that gap but means every route's
-  validation moving from an inline `.parse()` call to a schema on the route options.
+  the Zod schemas — `@asteasolutions/zod-to-openapi` would close that gap but means every
+  validation schema registering itself with the spec instead of staying a plain `.parse()`
+  call in the controller.
 - No automated UI test suite; the web app was verified against the real stack in a browser
   rather than with Playwright/RTL.
 - `minAmount`/`maxAmount` filters exist in the API but not the Transactions page's UI.
