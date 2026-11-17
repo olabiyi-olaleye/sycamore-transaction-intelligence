@@ -1,6 +1,8 @@
 import mongoose from 'mongoose';
 import { findAccountById } from '../accounts/accounts.repository.js';
 import { listEventsForTransaction } from '../classification/classification.repository.js';
+import { correctClassification } from '../classification/classification.service.js';
+import type { Category } from './categories.js';
 import { listFlagsForTransaction } from '../review/review.repository.js';
 import { ConflictError, NotFoundError } from '../../http/errors.js';
 import { formatKoboAsAmount, parseAmountToKobo, parseFilterAmountToKobo } from '../../money/money.js';
@@ -281,4 +283,23 @@ export async function getTransactionDetail(organisationId: string, transactionId
       resolvedAt: flag.resolvedAt ? flag.resolvedAt.toISOString() : null,
     })),
   };
+}
+
+export async function correctTransaction(
+  organisationId: string,
+  transactionId: string,
+  actorUserId: string,
+  category: Category,
+  note: string | undefined,
+): Promise<TransactionDetailView> {
+  if (!mongoose.isValidObjectId(transactionId)) {
+    throw new NotFoundError('Transaction not found');
+  }
+  const transaction = await findById(organisationId, transactionId);
+  if (!transaction) {
+    throw new NotFoundError('Transaction not found');
+  }
+
+  await correctClassification(organisationId, transactionId, transaction.category?.value ?? null, actorUserId, category, note);
+  return getTransactionDetail(organisationId, transactionId);
 }

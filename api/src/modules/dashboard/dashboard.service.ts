@@ -1,4 +1,5 @@
 import { formatKoboAsAmount } from '../../money/money.js';
+import { countOpenFlags } from '../review/review.repository.js';
 import { summarize } from './dashboard.repository.js';
 import type { DashboardSummaryQuery } from './dashboard.schema.js';
 
@@ -8,12 +9,14 @@ export interface DashboardSummaryView {
   net: string;
   spendingByCategory: Array<{ category: string; total: string }>;
   pendingClassificationCount: number;
-  // Open review flag count is added in stage 6, once review_flags exists.
   openFlagCount: number;
 }
 
 export async function getDashboardSummary(organisationId: string, query: DashboardSummaryQuery): Promise<DashboardSummaryView> {
-  const totals = await summarize(organisationId, { from: query.from, to: query.to });
+  const [totals, openFlagCount] = await Promise.all([
+    summarize(organisationId, { from: query.from, to: query.to }),
+    countOpenFlags(organisationId),
+  ]);
   const netKobo = totals.inflowsKobo - totals.outflowsKobo;
 
   return {
@@ -25,6 +28,6 @@ export async function getDashboardSummary(organisationId: string, query: Dashboa
       total: formatKoboAsAmount(row.totalKobo),
     })),
     pendingClassificationCount: totals.pendingClassificationCount,
-    openFlagCount: 0,
+    openFlagCount,
   };
 }

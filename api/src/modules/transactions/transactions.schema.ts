@@ -61,3 +61,10 @@ export const listTransactionsQuerySchema = z.object({
 });
 
 export type ListTransactionsQuery = z.infer<typeof listTransactionsQuerySchema>;
+
+export const correctionSchema = z.object({
+  category: z.enum(CATEGORIES),
+  note: z.string().min(1).optional(),
+});
+
+export type CorrectionInput = z.infer<typeof correctionSchema>;

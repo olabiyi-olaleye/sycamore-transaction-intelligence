@@ -1,18 +1,22 @@
 import { config } from '../../config/env.js';
 import { categoryLabel } from '../transactions/categories.js';
 import { createFlag } from '../review/review.repository.js';
+import { runDetectors } from '../review/detectors.js';
 import type { TransactionDocument } from '../../db/models/transaction.model.js';
 import { classifyResultSchema } from './classification.schema.js';
 import { mockLlmProvider } from './mockLlmProvider.js';
 import { RateLimitedProviderError, type ClassifyInput, type ClassifyResult } from './provider.js';
 import { classifyWithRules } from './rules.js';
 import {
+  applyCorrection,
   claimNextTransaction,
   insertEvent,
   markClassified,
   markFailed,
   scheduleRetry,
 } from './classification.repository.js';
+import { resolveOpenFlagsForTransaction } from '../review/review.repository.js';
+import type { Category } from '../transactions/categories.js';
 
 // "Automatic categorisation failed after 5 attempts" (build plan's
 // CLASSIFICATION_FAILED example) fixes this at 5.
@@ -154,6 +158,24 @@ async function classifyTransaction(transaction: TransactionDocument): Promise<vo
   }
 }
 
+/**
+ * A manual correction: writes the event and updates the transaction in one
+ * multi-document transaction (classification.repository.ts), then resolves
+ * any LOW_CONFIDENCE or CLASSIFICATION_FAILED flag on it — a human has just
+ * done what those flags were asking for.
+ */
+export async function correctClassification(
+  organisationId: string,
+  transactionId: string,
+  previousCategory: Category | null,
+  actorUserId: string,
+  newCategory: Category,
+  note: string | undefined,
+): Promise<void> {
+  await applyCorrection(organisationId, transactionId, previousCategory, newCategory, actorUserId, note);
+  await resolveOpenFlagsForTransaction(organisationId, transactionId, ['LOW_CONFIDENCE', 'CLASSIFICATION_FAILED'], actorUserId);
+}
+
 /** Claims and classifies one transaction. Called in a loop by the worker. */
 export async function processOneClaimedTransaction(): Promise<'claimed' | 'empty'> {
   const transaction = await claimNextTransaction(config.WORKER_LOCK_MS);
@@ -161,5 +183,8 @@ export async function processOneClaimedTransaction(): Promise<'claimed' | 'empty
     return 'empty';
   }
   await classifyTransaction(transaction);
+  // Duplicate/large-payment detection is about the raw transaction, not its
+  // category, so it runs regardless of whether classification succeeded.
+  await runDetectors(transaction.organisationId.toString(), transaction);
   return 'claimed';
 }

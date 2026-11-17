@@ -1,7 +1,18 @@
 import type { FastifyInstance } from 'fastify';
-import { requireOrganisationId } from '../../http/requestContext.js';
-import { batchEnvelopeSchema, importTransactionSchema, listTransactionsQuerySchema } from './transactions.schema.js';
-import { getTransactionDetail, importBatch, importTransaction, listTransactionsView } from './transactions.service.js';
+import { getRequestContext, requireOrganisationId } from '../../http/requestContext.js';
+import {
+  batchEnvelopeSchema,
+  correctionSchema,
+  importTransactionSchema,
+  listTransactionsQuerySchema,
+} from './transactions.schema.js';
+import {
+  correctTransaction,
+  getTransactionDetail,
+  importBatch,
+  importTransaction,
+  listTransactionsView,
+} from './transactions.service.js';
 
 export function transactionsRoutes(app: FastifyInstance): void {
   app.post('/transactions', async (request, reply) => {
@@ -29,6 +40,15 @@ export function transactionsRoutes(app: FastifyInstance): void {
     const organisationId = requireOrganisationId();
     const { id } = request.params as { id: string };
     const detail = await getTransactionDetail(organisationId, id);
+    reply.send(detail);
+  });
+
+  app.post('/transactions/:id/corrections', async (request, reply) => {
+    const organisationId = requireOrganisationId();
+    const { userId } = getRequestContext();
+    const { id } = request.params as { id: string };
+    const body = correctionSchema.parse(request.body);
+    const detail = await correctTransaction(organisationId, id, userId as string, body.category, body.note);
     reply.send(detail);
   });
 }

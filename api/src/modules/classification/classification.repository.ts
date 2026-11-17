@@ -1,3 +1,4 @@
+import mongoose from 'mongoose';
 import { TENANT_GUARD_BYPASS } from '../../db/tenantPlugin.js';
 import {
   TransactionModel,
@@ -8,7 +9,7 @@ import {
   ClassificationEventModel,
   type ClassificationEventDocument,
 } from '../../db/models/classificationEvent.model.js';
-import type { Category } from '../transactions/categories.js';
+import { type Category } from '../transactions/categories.js';
 
 /**
  * Atomically claims whichever due transaction comes first: `pending` and due
@@ -113,4 +114,61 @@ export async function markFailed(organisationId: string, transactionId: string, 
     { organisationId, _id: transactionId },
     { $set: { 'classification.status': 'failed', 'classification.lastError': errorMessage, 'classification.lockedUntil': null } },
   );
+}
+
+/**
+ * A human correction: one classification_events insert plus one transaction
+ * update, in a single multi-document transaction (needs the replica set
+ * stage 1 set up). Also moves classification.status to 'classified' — a
+ * transaction a human has just categorised must stop being eligible for the
+ * worker to claim and overwrite with a rule/AI guess.
+ */
+export async function applyCorrection(
+  organisationId: string,
+  transactionId: string,
+  previousCategory: Category | null,
+  newCategory: Category,
+  actorUserId: string,
+  note: string | undefined,
+): Promise<ClassificationEventDocument> {
+  const session = await mongoose.startSession();
+  try {
+    let event: ClassificationEventDocument | undefined;
+    await session.withTransaction(async () => {
+      const [created] = await ClassificationEventModel.create(
+        [
+          {
+            organisationId,
+            transactionId,
+            source: 'human',
+            provider: 'human',
+            category: newCategory,
+            previousCategory,
+            confidence: null,
+            reason: 'Manual correction',
+            actorUserId,
+            note: note ?? null,
+          },
+        ],
+        { session },
+      );
+      event = created!.toObject();
+
+      await TransactionModel.updateOne(
+        { organisationId, _id: transactionId },
+        {
+          $set: {
+            category: { value: newCategory, source: 'human', confidence: 1, eventId: event._id },
+            'classification.status': 'classified',
+            'classification.lastError': null,
+            'classification.lockedUntil': null,
+          },
+        },
+        { session },
+      );
+    });
+    return event!;
+  } finally {
+    await session.endSession();
+  }
 }
