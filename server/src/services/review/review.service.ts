@@ -1,7 +1,7 @@
-import mongoose from 'mongoose';
+import { isUuid } from '../../db/tenant.js';
 import { ConflictError, NotFoundError } from '../../utils/errors.js';
 import { decodeCursor, encodeCursor } from '../../utils/cursor.js';
-import { findFlagById, listFlags, resolveFlag, type ReviewFlagDocument } from '../../models/reviewFlag.model.js';
+import { findFlagById, listFlags, resolveFlag, type ReviewFlag } from '../../repositories/reviewFlags.repository.js';
 import type { ListFlagsQuery } from '../../validation/review.validation.js';
 
 export interface ReviewFlagView {
@@ -14,10 +14,10 @@ export interface ReviewFlagView {
   resolvedAt: string | null;
 }
 
-function toView(flag: ReviewFlagDocument): ReviewFlagView {
+function toView(flag: ReviewFlag): ReviewFlagView {
   return {
-    id: flag._id.toString(),
-    transactionId: flag.transactionId.toString(),
+    id: flag.id,
+    transactionId: flag.transactionId,
     type: flag.type,
     reason: flag.reason,
     status: flag.status,
@@ -35,12 +35,12 @@ export async function listFlagsView(organisationId: string, query: ListFlagsQuer
   const cursor = query.cursor ? decodeCursor(query.cursor) : undefined;
   const { flags, hasMore } = await listFlags(organisationId, { status: query.status, cursor, limit: query.limit });
   const last = flags[flags.length - 1];
-  const nextCursor = hasMore && last ? encodeCursor({ date: last.createdAt, id: last._id.toString() }) : null;
+  const nextCursor = hasMore && last ? encodeCursor({ date: last.createdAt, id: last.id }) : null;
   return { flags: flags.map(toView), nextCursor };
 }
 
 export async function resolveFlagView(organisationId: string, flagId: string, resolvedByUserId: string): Promise<ReviewFlagView> {
-  if (!mongoose.isValidObjectId(flagId)) {
+  if (!isUuid(flagId)) {
     throw new NotFoundError('Flag not found');
   }
   const resolved = await resolveFlag(organisationId, flagId, resolvedByUserId);

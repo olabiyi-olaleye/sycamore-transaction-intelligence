@@ -1,7 +1,7 @@
 import type { Request, Response } from 'express';
 import { NotFoundError } from '../utils/errors.js';
 import { getRequestContext, requireOrganisationId } from '../context/requestContext.js';
-import { findUserById } from '../models/user.model.js';
+import { findUserById } from '../repositories/users.repository.js';
 import { loginSchema } from '../validation/auth.validation.js';
 import { login } from '../services/auth/auth.service.js';
 
@@ -19,7 +19,7 @@ export async function meController(_req: Request, res: Response): Promise<void> 
     throw new NotFoundError('User not found');
   }
   res.json({
-    id: user._id.toString(),
+    id: user.id,
     email: user.email,
     name: user.name,
     role: user.role,

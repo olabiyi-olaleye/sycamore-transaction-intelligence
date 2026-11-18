@@ -1,53 +1,50 @@
 import argon2 from 'argon2';
 import { config } from '../config/env.js';
-import { connectDb, disconnectDb } from '../config/database.js';
-import { AccountModel } from '../models/account.model.js';
-import { OrganisationModel } from '../models/organisation.model.js';
-import { UserModel } from '../models/user.model.js';
+import { disconnectDb, systemDb } from '../db/client.js';
 import { importBatch } from '../services/transactions/transactions.service.js';
 import { SEED_ORGANISATIONS } from './data.js';
 import { generateSeedRows } from './generateTransactions.js';
 
-// Organisations and users are upserted on a natural key (name, email) with
-// $setOnInsert, so re-running never duplicates them. Transactions go through
-// the real import service (importBatch), so a re-run just reports every row
-// as a duplicate, the same as any client resending a batch.
+// Organisations, users and accounts are upserted on a natural key (name,
+// email, account number), so re-running never duplicates them. Creating
+// them needs the system role, since there's no organisation to scope to
+// yet. Transactions go through the real import service (importBatch) as the
+// app role, so a re-run just reports every row as a duplicate, the same as
+// any client resending a batch.
 async function main(): Promise<void> {
-  await connectDb();
+  const db = systemDb();
   const passwordHash = await argon2.hash(config.SEED_PASSWORD);
 
   for (const seedOrg of SEED_ORGANISATIONS) {
-    const org = await OrganisationModel.findOneAndUpdate(
-      { name: seedOrg.name },
-      { $setOnInsert: { name: seedOrg.name, settings: { largePaymentMultiple: seedOrg.largePaymentMultiple } } },
-      { upsert: true, new: true },
-    );
-    const organisationId = org._id.toString();
+    const org = await db.organisation.upsert({
+      where: { name: seedOrg.name },
+      update: {},
+      create: { name: seedOrg.name, largePaymentMultiple: seedOrg.largePaymentMultiple },
+    });
+    const organisationId = org.id;
 
     for (const user of seedOrg.users) {
-      await UserModel.findOneAndUpdate(
-        { email: user.email },
-        { $setOnInsert: { organisationId: org._id, email: user.email, passwordHash, name: user.name, role: user.role } },
-        { upsert: true, new: true },
-      );
+      await db.user.upsert({
+        where: { email: user.email.toLowerCase() },
+        update: {},
+        create: { organisationId, email: user.email.toLowerCase(), passwordHash, name: user.name, role: user.role },
+      });
     }
 
     const accountIdBySlug = new Map<string, string>();
     for (const account of seedOrg.accounts) {
-      const doc = await AccountModel.findOneAndUpdate(
-        { organisationId: org._id, accountNumberLast4: account.accountNumberLast4 },
-        {
-          $setOnInsert: {
-            organisationId: org._id,
-            name: account.name,
-            bankName: account.bankName,
-            accountNumberLast4: account.accountNumberLast4,
-            currency: 'NGN',
-          },
+      const saved = await db.account.upsert({
+        where: { organisationId_accountNumberLast4: { organisationId, accountNumberLast4: account.accountNumberLast4 } },
+        update: {},
+        create: {
+          organisationId,
+          name: account.name,
+          bankName: account.bankName,
+          accountNumberLast4: account.accountNumberLast4,
+          currency: 'NGN',
         },
-        { upsert: true, new: true },
-      );
-      accountIdBySlug.set(account.slug, doc._id.toString());
+      });
+      accountIdBySlug.set(account.slug, saved.id);
     }
 
     const rows = generateSeedRows(seedOrg).map((row) => ({

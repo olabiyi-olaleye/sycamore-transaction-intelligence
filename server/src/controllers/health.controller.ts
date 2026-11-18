@@ -1,6 +1,6 @@
 import type { Request, Response } from 'express';
-import mongoose from 'mongoose';
-import { classificationQueueStats, type ClassificationQueueStats } from '../models/transaction.model.js';
+import { checkDatabase } from '../db/client.js';
+import { classificationQueueStats, type ClassificationQueueStats } from '../repositories/transactions.repository.js';
 import { logger } from '../utils/logger.js';
 
 // status/db answer "is the API up and can it reach the database". The queue
@@ -9,7 +9,7 @@ import { logger } from '../utils/logger.js';
 // itself is healthy. Imports keep working either way, so a slow queue
 // doesn't change the status code.
 export async function healthController(_req: Request, res: Response): Promise<void> {
-  const dbConnected = mongoose.connection.readyState === 1;
+  const dbConnected = await checkDatabase();
 
   let classificationQueue: ClassificationQueueStats | null = null;
   if (dbConnected) {

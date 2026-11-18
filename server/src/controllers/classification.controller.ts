@@ -1,6 +1,6 @@
 import type { Request, Response } from 'express';
 import { requireOrganisationId } from '../context/requestContext.js';
-import { requeueFailed } from '../models/transaction.model.js';
+import { requeueFailed } from '../repositories/transactions.repository.js';
 
 // Sends this organisation's failed transactions back to the worker. Their
 // CLASSIFICATION_FAILED flags stay open until each one classifies, and the

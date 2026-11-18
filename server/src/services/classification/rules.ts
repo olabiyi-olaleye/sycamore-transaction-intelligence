@@ -1,4 +1,4 @@
-import type { Direction } from '../../models/transaction.model.js';
+import type { Direction } from '../../generated/prisma/enums.js';
 import type { Category } from '../../constants/categories.js';
 import type { ClassifyInput, ClassifyResult } from './provider.js';
 

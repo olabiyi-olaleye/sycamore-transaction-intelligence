@@ -1,12 +1,10 @@
-import { connectDb } from './config/database.js';
+import { checkDatabase } from './db/client.js';
 import { runClaimLoop } from './services/classification/claimLoop.js';
 import { logger } from './utils/logger.js';
 
 async function main(): Promise<void> {
-  try {
-    await connectDb();
-  } catch (error) {
-    logger.error('worker_start_failed', { reason: 'could not connect to MongoDB', error });
+  if (!(await checkDatabase())) {
+    logger.error('worker_start_failed', { reason: 'could not connect to Postgres' });
     process.exit(1);
   }
 

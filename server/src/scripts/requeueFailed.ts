@@ -1,17 +1,15 @@
-import { connectDb, disconnectDb } from '../config/database.js';
-import { OrganisationModel } from '../models/organisation.model.js';
-import { requeueFailed } from '../models/transaction.model.js';
+import { disconnectDb, systemDb } from '../db/client.js';
+import { requeueFailed } from '../repositories/transactions.repository.js';
 
 // For an operator after an incident: puts every organisation's failed
-// transactions back in the queue. It goes one organisation at a time through
-// the same scoped requeueFailed() the API uses, so the tenant guard still
-// applies. A running worker picks the rows up.
+// transactions back in the queue. Listing the organisations needs the system
+// role; the requeue itself goes one organisation at a time through the same
+// scoped function the API uses, so row-level security still applies to it.
 async function main(): Promise<void> {
-  await connectDb();
-  const organisations = await OrganisationModel.find({}, { _id: 1, name: 1 }).lean();
+  const organisations = await systemDb().organisation.findMany({ select: { id: true, name: true }, orderBy: { name: 'asc' } });
   let total = 0;
   for (const organisation of organisations) {
-    const requeued = await requeueFailed(organisation._id.toString());
+    const requeued = await requeueFailed(organisation.id);
     if (requeued > 0) console.log(`  ${organisation.name}: ${requeued}`);
     total += requeued;
   }

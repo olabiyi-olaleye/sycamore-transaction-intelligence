@@ -1,45 +1,42 @@
-import { TransactionModel, type TransactionDocument } from '../../models/transaction.model.js';
 import { formatNaira } from '../../utils/money.js';
-import { createFlag } from '../../models/reviewFlag.model.js';
-import { getLargePaymentMultiple } from '../../models/organisation.model.js';
+import { createFlag } from '../../repositories/reviewFlags.repository.js';
+import { getLargePaymentMultiple } from '../../repositories/organisations.repository.js';
+import {
+  debitStats,
+  findSameAmountNearby,
+  hasSimilarDebitBetween,
+  type Transaction,
+} from '../../repositories/transactions.repository.js';
 
-const DUPLICATE_WINDOW_MS = 24 * 60 * 60 * 1000;
-const NINETY_DAYS_MS = 90 * 24 * 60 * 60 * 1000;
+const HOUR_MS = 60 * 60 * 1000;
+const DAY_MS = 24 * HOUR_MS;
 const MIN_PRIOR_DEBITS = 10;
-const DAY_MS = 24 * 60 * 60 * 1000;
 
 // "3 hours earlier" / "2 hours later". Bank exports often carry a date with
 // no time, so two payments on the same day can have identical timestamps;
 // those read "on the same date" rather than a made-up "1 hour earlier".
 function hoursApartPhrase(transactionDate: Date, candidateDate: Date): string {
   const deltaMs = transactionDate.getTime() - candidateDate.getTime();
-  const hours = Math.round(Math.abs(deltaMs) / 3_600_000);
+  const hours = Math.round(Math.abs(deltaMs) / HOUR_MS);
   if (hours === 0) return 'on the same date';
   return `${hours} hour${hours === 1 ? '' : 's'} ${deltaMs > 0 ? 'earlier' : 'later'}`;
 }
 
 /** Same account, direction and amount, a different reference, within 24 hours either side. */
-export async function detectPossibleDuplicate(organisationId: string, transaction: TransactionDocument): Promise<void> {
-  const windowStart = new Date(transaction.date.getTime() - DUPLICATE_WINDOW_MS);
-  const windowEnd = new Date(transaction.date.getTime() + DUPLICATE_WINDOW_MS);
-
-  const candidate = await TransactionModel.findOne({
+export async function detectPossibleDuplicate(organisationId: string, transaction: Transaction): Promise<void> {
+  const candidate = await findSameAmountNearby(
     organisationId,
-    accountId: transaction.accountId,
-    direction: transaction.direction,
-    amountKobo: transaction.amountKobo,
-    externalReference: { $ne: transaction.externalReference },
-    date: { $gte: windowStart, $lte: windowEnd },
-    _id: { $ne: transaction._id },
-  }).lean();
-
+    transaction,
+    new Date(transaction.date.getTime() - DAY_MS),
+    new Date(transaction.date.getTime() + DAY_MS),
+  );
   if (!candidate) return;
 
   await createFlag(organisationId, {
-    transactionId: transaction._id.toString(),
+    transactionId: transaction.id,
     type: 'POSSIBLE_DUPLICATE',
     reason: `Same amount (${formatNaira(transaction.amountKobo)}) was paid from this account ${hoursApartPhrase(transaction.date, candidate.date)} under reference ${candidate.externalReference}.`,
-    details: { duplicateOfTransactionId: candidate._id.toString() },
+    details: { duplicateOfTransactionId: candidate.id },
   });
 }
 
@@ -49,58 +46,42 @@ export async function detectPossibleDuplicate(organisationId: string, transactio
  * top-up, rent), so it isn't "unusual" however large it is next to the
  * account's everyday spending.
  */
-async function isRecurringMonthly(organisationId: string, transaction: TransactionDocument): Promise<boolean> {
-  const lower = (transaction.amountKobo * 95n) / 100n;
-  const upper = (transaction.amountKobo * 105n) / 100n;
-  const match = await TransactionModel.findOne({
+function isRecurringMonthly(organisationId: string, transaction: Transaction): Promise<boolean> {
+  return hasSimilarDebitBetween(
     organisationId,
-    accountId: transaction.accountId,
-    direction: 'debit',
-    amountKobo: { $gte: lower, $lte: upper },
-    date: { $gte: new Date(transaction.date.getTime() - 40 * DAY_MS), $lte: new Date(transaction.date.getTime() - 20 * DAY_MS) },
-    _id: { $ne: transaction._id },
-  })
-    .select('_id')
-    .lean();
-  return Boolean(match);
+    transaction,
+    (transaction.amountKobo * 95n) / 100n,
+    (transaction.amountKobo * 105n) / 100n,
+    new Date(transaction.date.getTime() - 40 * DAY_MS),
+    new Date(transaction.date.getTime() - 20 * DAY_MS),
+  );
 }
 
-/** A debit above largePaymentMultiple x the account's median debit over the last 90 days, with at least 10 prior debits, that isn't a recurring monthly payment. */
-export async function detectUnusuallyLarge(organisationId: string, transaction: TransactionDocument): Promise<void> {
+/**
+ * A debit above largePaymentMultiple x the account's median debit over the
+ * last 90 days, with at least 10 prior debits, that isn't a recurring
+ * monthly payment. The count and median are computed in the database.
+ */
+export async function detectUnusuallyLarge(organisationId: string, transaction: Transaction): Promise<void> {
   if (transaction.direction !== 'debit') return;
 
-  const since = new Date(transaction.date.getTime() - NINETY_DAYS_MS);
-  const priorDebits = await TransactionModel.find({
-    organisationId,
-    accountId: transaction.accountId,
-    direction: 'debit',
-    date: { $gte: since, $lte: transaction.date },
-    _id: { $ne: transaction._id },
-  })
-    .select('amountKobo')
-    .lean();
-
-  if (priorDebits.length < MIN_PRIOR_DEBITS) return;
-
-  const amounts = priorDebits.map((doc) => doc.amountKobo).sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
-  const mid = Math.floor(amounts.length / 2);
-  const median = amounts.length % 2 === 0 ? (amounts[mid - 1]! + amounts[mid]!) / 2n : amounts[mid]!;
-  if (median <= 0n) return;
+  const { count, medianKobo } = await debitStats(organisationId, transaction, new Date(transaction.date.getTime() - 90 * DAY_MS));
+  if (count < MIN_PRIOR_DEBITS || medianKobo === null || medianKobo <= 0n) return;
 
   const multiplier = await getLargePaymentMultiple(organisationId);
-  if (transaction.amountKobo <= median * BigInt(multiplier)) return;
+  if (transaction.amountKobo <= medianKobo * BigInt(multiplier)) return;
   if (await isRecurringMonthly(organisationId, transaction)) return;
 
-  const multiple = transaction.amountKobo / median; // bigint division, so no float touches the money here
+  const multiple = transaction.amountKobo / medianKobo; // bigint division, so no float touches the money here
   await createFlag(organisationId, {
-    transactionId: transaction._id.toString(),
+    transactionId: transaction.id,
     type: 'UNUSUALLY_LARGE',
-    reason: `${formatNaira(transaction.amountKobo)} is ${multiple}x this account's typical debit of ${formatNaira(median)}.`,
-    details: { medianDebitKobo: median.toString(), multiplier },
+    reason: `${formatNaira(transaction.amountKobo)} is ${multiple}x this account's typical debit of ${formatNaira(medianKobo)}.`,
+    details: { medianDebitKobo: medianKobo.toString(), multiplier },
   });
 }
 
-export async function runDetectors(organisationId: string, transaction: TransactionDocument): Promise<void> {
+export async function runDetectors(organisationId: string, transaction: Transaction): Promise<void> {
   await detectPossibleDuplicate(organisationId, transaction);
   await detectUnusuallyLarge(organisationId, transaction);
 }

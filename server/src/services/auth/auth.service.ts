@@ -1,6 +1,6 @@
 import argon2 from 'argon2';
 import { UnauthorisedError } from '../../utils/errors.js';
-import { findUserByEmail } from '../../models/user.model.js';
+import { findUserByEmail } from '../../repositories/users.repository.js';
 import { signAccessToken } from './jwt.js';
 
 export interface LoginResult {
@@ -26,9 +26,9 @@ export async function login(email: string, password: string): Promise<LoginResul
     throw new UnauthorisedError('Invalid email or password');
   }
 
-  const organisationId = user.organisationId.toString();
+  const organisationId = user.organisationId;
   const token = signAccessToken({
-    sub: user._id.toString(),
+    sub: user.id,
     organisationId,
     role: user.role,
     email: user.email,
@@ -36,6 +36,6 @@ export async function login(email: string, password: string): Promise<LoginResul
 
   return {
     token,
-    user: { id: user._id.toString(), email: user.email, name: user.name, role: user.role, organisationId },
+    user: { id: user.id, email: user.email, name: user.name, role: user.role, organisationId },
   };
 }

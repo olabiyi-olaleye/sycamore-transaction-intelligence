@@ -1,6 +1,6 @@
-import mongoose from 'mongoose';
+import { isUuid } from '../../db/tenant.js';
 import { NotFoundError } from '../../utils/errors.js';
-import { findAccountById, listAccounts as listAccountsRepo, type AccountDocument } from '../../models/account.model.js';
+import { findAccountById, listAccounts as listAccountsRepo, type Account } from '../../repositories/accounts.repository.js';
 
 export interface AccountView {
   id: string;
@@ -10,9 +10,9 @@ export interface AccountView {
   currency: string;
 }
 
-function toView(account: AccountDocument): AccountView {
+function toView(account: Account): AccountView {
   return {
-    id: account._id.toString(),
+    id: account.id,
     name: account.name,
     bankName: account.bankName,
     accountNumberLast4: account.accountNumberLast4,
@@ -26,9 +26,9 @@ export async function listAccounts(organisationId: string): Promise<AccountView[
 }
 
 export async function getAccountById(organisationId: string, accountId: string): Promise<AccountView> {
-  // A malformed id shouldn't 500 from a Mongoose cast error; treat it the
-  // same as a valid id that just doesn't belong to this organisation.
-  if (!mongoose.isValidObjectId(accountId)) {
+  // A malformed id would otherwise reach Postgres as an invalid uuid and
+  // fail with a 500; treat it the same as an id from another organisation.
+  if (!isUuid(accountId)) {
     throw new NotFoundError('Account not found');
   }
   const account = await findAccountById(organisationId, accountId);

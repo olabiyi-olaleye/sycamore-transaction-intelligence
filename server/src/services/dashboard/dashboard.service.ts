@@ -1,6 +1,6 @@
 import { formatKoboAsAmount } from '../../utils/money.js';
-import { countOpenFlags } from '../../models/reviewFlag.model.js';
-import { summarizeTransactions } from '../../models/transaction.model.js';
+import { countOpenFlags } from '../../repositories/reviewFlags.repository.js';
+import { summarizeTransactions } from '../../repositories/transactions.repository.js';
 import type { DashboardSummaryQuery } from '../../validation/dashboard.validation.js';
 
 export interface DashboardSummaryView {

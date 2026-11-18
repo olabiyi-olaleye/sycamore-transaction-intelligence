@@ -6,7 +6,11 @@ import { z } from 'zod';
 const schema = z.object({
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
   PORT: z.coerce.number().int().positive().default(4000),
-  MONGO_URI: z.string().min(1, 'MONGO_URI is required'),
+  // The API connects as a role subject to row-level security; the worker,
+  // health check, login and seed use a second role that can work across
+  // organisations. See prisma/init/roles.sql.
+  DATABASE_URL: z.string().min(1, 'DATABASE_URL is required'),
+  SYSTEM_DATABASE_URL: z.string().min(1, 'SYSTEM_DATABASE_URL is required'),
   JWT_SECRET: z.string().min(32, 'JWT_SECRET should be a long random string, not a guessable word'),
   LOG_LEVEL: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent']).default('info'),
   // Which ClassificationProvider the worker calls; see services/classification/providers.ts.
@@ -15,6 +19,7 @@ const schema = z.object({
   MOCK_LLM_FAILURE_RATE: z.coerce.number().min(0).max(1).default(0),
   WORKER_POLL_INTERVAL_MS: z.coerce.number().int().positive().default(1000),
   WORKER_LOCK_MS: z.coerce.number().int().positive().default(30000),
+  WORKER_BATCH_SIZE: z.coerce.number().int().positive().max(500).default(25),
   SEED_PASSWORD: z.string().min(8).default('Passw0rd!2024'),
 });
 

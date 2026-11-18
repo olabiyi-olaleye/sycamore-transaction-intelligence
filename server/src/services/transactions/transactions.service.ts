@@ -1,7 +1,7 @@
-import mongoose from 'mongoose';
-import { findAccountById } from '../../models/account.model.js';
-import { listEventsForTransaction } from '../../models/classificationEvent.model.js';
-import { listFlagsForTransaction } from '../../models/reviewFlag.model.js';
+import { isUuid } from '../../db/tenant.js';
+import { findAccountById } from '../../repositories/accounts.repository.js';
+import { listEventsForTransaction } from '../../repositories/classificationEvents.repository.js';
+import { listFlagsForTransaction } from '../../repositories/reviewFlags.repository.js';
 import { correctClassification } from '../classification/classification.service.js';
 import { ConflictError, NotFoundError } from '../../utils/errors.js';
 import { formatKoboAsAmount, parseAmountToKobo, parseFilterAmountToKobo } from '../../utils/money.js';
@@ -14,8 +14,8 @@ import {
   insertTransaction,
   listTransactions as listTransactionsRepo,
   type NewTransactionInput,
-  type TransactionDocument,
-} from '../../models/transaction.model.js';
+  type Transaction,
+} from '../../repositories/transactions.repository.js';
 import {
   importTransactionSchema,
   type ImportTransactionInput,
@@ -37,10 +37,10 @@ export interface TransactionView {
   reviewStatus: string;
 }
 
-export function toView(tx: TransactionDocument): TransactionView {
+export function toView(tx: Transaction): TransactionView {
   return {
-    id: tx._id.toString(),
-    accountId: tx.accountId.toString(),
+    id: tx.id,
+    accountId: tx.accountId,
     externalReference: tx.externalReference,
     amount: formatKoboAsAmount(tx.amountKobo),
     direction: tx.direction,
@@ -48,11 +48,14 @@ export function toView(tx: TransactionDocument): TransactionView {
     narration: tx.narration,
     merchant: tx.merchant,
     date: tx.date.toISOString(),
-    category: tx.category ? { value: tx.category.value, source: tx.category.source, confidence: tx.category.confidence } : null,
+    category:
+      tx.category && tx.categorySource && tx.categoryConfidence !== null
+        ? { value: tx.category, source: tx.categorySource, confidence: tx.categoryConfidence }
+        : null,
     classification: {
-      status: tx.classification.status,
-      attempts: tx.classification.attempts,
-      lastError: tx.classification.lastError,
+      status: tx.classificationStatus,
+      attempts: tx.attempts,
+      lastError: tx.lastError,
     },
     reviewStatus: tx.reviewStatus,
   };
@@ -72,7 +75,7 @@ function toNewTransactionInput(organisationId: string, input: ImportTransactionI
   };
 }
 
-function sameTransaction(existing: TransactionDocument, candidate: NewTransactionInput): boolean {
+function sameTransaction(existing: Transaction, candidate: NewTransactionInput): boolean {
   return (
     existing.amountKobo === candidate.amountKobo &&
     existing.direction === candidate.direction &&
@@ -88,8 +91,13 @@ export interface ImportOutcome {
   transaction: TransactionView;
 }
 
+async function accountBelongsTo(organisationId: string, accountId: string): Promise<boolean> {
+  if (!isUuid(accountId)) return false;
+  return Boolean(await findAccountById(organisationId, accountId));
+}
+
 export async function importTransaction(organisationId: string, input: ImportTransactionInput): Promise<ImportOutcome> {
-  const account = await findAccountById(organisationId, input.accountId);
+  const account = await accountBelongsTo(organisationId, input.accountId);
   if (!account) {
     throw new NotFoundError('Account not found');
   }
@@ -97,7 +105,7 @@ export async function importTransaction(organisationId: string, input: ImportTra
   const candidate = toNewTransactionInput(organisationId, input);
   const result = await insertTransaction(candidate);
   if (result.outcome === 'inserted') {
-    return { status: 'created', transaction: toView(result.document) };
+    return { status: 'created', transaction: toView(result.transaction) };
   }
 
   const existing = await findByReference(organisationId, input.accountId, input.externalReference);
@@ -144,8 +152,7 @@ export async function importBatch(organisationId: string, rawRows: unknown[]): P
     const row = parsed.data;
     let ownsAccount = accountOwnership.get(row.accountId);
     if (ownsAccount === undefined) {
-      const account = await findAccountById(organisationId, row.accountId);
-      ownsAccount = Boolean(account);
+      ownsAccount = await accountBelongsTo(organisationId, row.accountId);
       accountOwnership.set(row.accountId, ownsAccount);
     }
     if (!ownsAccount) {
@@ -163,12 +170,15 @@ export async function importBatch(organisationId: string, rawRows: unknown[]): P
     candidates.push({ index, input: toNewTransactionInput(organisationId, row) });
   }
 
-  const outcome = await insertManyTransactions(candidates.map((candidate) => candidate.input));
+  const outcome = await insertManyTransactions(
+    organisationId,
+    candidates.map((candidate) => candidate.input),
+  );
 
-  for (const { position, document } of outcome.inserted) {
+  for (const { position, transaction } of outcome.inserted) {
     const candidate = candidates[position];
     if (!candidate) continue;
-    results[candidate.index] = { index: candidate.index, status: 'created', transactionId: document._id.toString() };
+    results[candidate.index] = { index: candidate.index, status: 'created', transactionId: transaction.id };
   }
   for (const position of outcome.duplicatePositions) {
     const candidate = candidates[position];
@@ -222,7 +232,7 @@ export async function listTransactionsView(
   });
 
   const last = transactions[transactions.length - 1];
-  const nextCursor = hasMore && last ? encodeCursor({ date: last.date, id: last._id.toString() }) : null;
+  const nextCursor = hasMore && last ? encodeCursor({ date: last.date, id: last.id }) : null;
 
   return { transactions: transactions.map(toView), nextCursor };
 }
@@ -254,7 +264,7 @@ export interface TransactionDetailView extends TransactionView {
 }
 
 export async function getTransactionDetail(organisationId: string, transactionId: string): Promise<TransactionDetailView> {
-  if (!mongoose.isValidObjectId(transactionId)) {
+  if (!isUuid(transactionId)) {
     throw new NotFoundError('Transaction not found');
   }
   const transaction = await findById(organisationId, transactionId);
@@ -276,12 +286,12 @@ export async function getTransactionDetail(organisationId: string, transactionId
       previousCategory: event.previousCategory,
       confidence: event.confidence,
       reason: event.reason,
-      actorUserId: event.actorUserId ? event.actorUserId.toString() : null,
+      actorUserId: event.actorUserId,
       note: event.note,
       createdAt: event.createdAt.toISOString(),
     })),
     flags: flags.map((flag) => ({
-      id: flag._id.toString(),
+      id: flag.id,
       type: flag.type,
       reason: flag.reason,
       status: flag.status,
@@ -298,7 +308,7 @@ export async function correctTransaction(
   category: Category,
   note: string | undefined,
 ): Promise<TransactionDetailView> {
-  if (!mongoose.isValidObjectId(transactionId)) {
+  if (!isUuid(transactionId)) {
     throw new NotFoundError('Transaction not found');
   }
   const transaction = await findById(organisationId, transactionId);
@@ -306,6 +316,6 @@ export async function correctTransaction(
     throw new NotFoundError('Transaction not found');
   }
 
-  await correctClassification(organisationId, transactionId, transaction.category?.value ?? null, actorUserId, category, note);
+  await correctClassification(organisationId, transactionId, transaction.category, actorUserId, category, note);
   return getTransactionDetail(organisationId, transactionId);
 }

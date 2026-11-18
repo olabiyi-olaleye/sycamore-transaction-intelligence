@@ -1,5 +1,5 @@
 import { config } from '../../config/env.js';
-import { processOneClaimedTransaction } from './classification.service.js';
+import { processClaimedBatch } from './classification.service.js';
 import { logger } from '../../utils/logger.js';
 
 function sleep(ms: number, signal: AbortSignal): Promise<void> {
@@ -13,7 +13,7 @@ function sleep(ms: number, signal: AbortSignal): Promise<void> {
 }
 
 export interface ClaimLoopOptions {
-  processOne?: () => Promise<'claimed' | 'empty'>;
+  processBatch?: () => Promise<number>;
   onError?: (error: unknown) => void;
   pollIntervalMs?: number;
 }
@@ -22,20 +22,20 @@ function logError(error: unknown): void {
   logger.error('worker_iteration_failed', { error });
 }
 
-// Only sleeps when the queue is empty (or after an error), so a backlog
-// drains at provider speed instead of one row per poll interval. An error in
-// one iteration (a database blip, an unexpected document) is logged and the
-// loop carries on. The transaction it was working on is still locked, so it
-// gets reclaimed once its lock expires.
+// Claims WORKER_BATCH_SIZE rows at a time and only sleeps when nothing was
+// due (or after an error), so a backlog drains at provider speed instead of
+// one batch per poll interval. An error in one iteration (a database blip,
+// say) is logged and the loop carries on; anything it had claimed stays
+// locked until the lock expires, then gets reclaimed.
 export async function runClaimLoop(signal: AbortSignal, options: ClaimLoopOptions = {}): Promise<void> {
-  const processOne = options.processOne ?? processOneClaimedTransaction;
+  const processBatch = options.processBatch ?? (() => processClaimedBatch(config.WORKER_BATCH_SIZE));
   const onError = options.onError ?? logError;
   const pollIntervalMs = options.pollIntervalMs ?? config.WORKER_POLL_INTERVAL_MS;
 
   while (!signal.aborted) {
     try {
-      const outcome = await processOne();
-      if (outcome === 'empty') {
+      const claimed = await processBatch();
+      if (claimed === 0) {
         await sleep(pollIntervalMs, signal);
       }
     } catch (error) {

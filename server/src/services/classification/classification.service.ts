@@ -1,16 +1,16 @@
 import { config } from '../../config/env.js';
 import { categoryLabel, type Category } from '../../constants/categories.js';
-import { createFlag, resolveOpenFlagsForTransaction } from '../../models/reviewFlag.model.js';
+import { createFlag, resolveOpenFlagsForTransaction } from '../../repositories/reviewFlags.repository.js';
 import { runDetectors } from '../review/detectors.js';
 import {
   applyCorrection,
-  claimNextTransaction,
+  claimDueTransactions,
   markClassified,
   markFailed,
   scheduleRetry,
-  type TransactionDocument,
-} from '../../models/transaction.model.js';
-import { insertEvent } from '../../models/classificationEvent.model.js';
+  type Transaction,
+} from '../../repositories/transactions.repository.js';
+import { insertEvent } from '../../repositories/classificationEvents.repository.js';
 import { classifyResultSchema } from '../../validation/classification.validation.js';
 import { getClassificationProvider } from './providers.js';
 import { RateLimitedProviderError, type ClassificationProvider, type ClassifyInput, type ClassifyResult } from './provider.js';
@@ -112,7 +112,7 @@ async function finishClassification(
     confidence: result.confidence,
     reason: result.reason,
   });
-  await markClassified(organisationId, transactionId, result.category, source, result.confidence, event._id.toString());
+  await markClassified(organisationId, transactionId, result.category, source, result.confidence, event.id);
   // A transaction that failed before and was requeued has an open
   // CLASSIFICATION_FAILED flag; it no longer applies.
   await resolveOpenFlagsForTransaction(organisationId, transactionId, ['CLASSIFICATION_FAILED'], null);
@@ -128,11 +128,11 @@ async function finishClassification(
 
 async function handleInvalidResponse(
   organisationId: string,
-  transaction: TransactionDocument,
+  transaction: Transaction,
   errorMessage: string,
 ): Promise<void> {
-  const transactionId = transaction._id.toString();
-  const invalidSoFar = transaction.classification.invalidResponses + 1;
+  const transactionId = transaction.id;
+  const invalidSoFar = transaction.invalidResponses + 1;
   logger.warn('classification_invalid_response', { organisationId, transactionId, invalidResponses: invalidSoFar, reason: errorMessage });
   if (invalidSoFar >= MAX_INVALID_RESPONSES) {
     await markFailed(organisationId, transactionId, errorMessage);
@@ -144,23 +144,23 @@ async function handleInvalidResponse(
     });
     return;
   }
-  const delayMs = backoffWithJitter(transaction.classification.attempts);
+  const delayMs = backoffWithJitter(transaction.attempts);
   await scheduleRetry(organisationId, transactionId, errorMessage, new Date(Date.now() + delayMs), { invalidResponse: true });
 }
 
 async function handleUnavailable(
   organisationId: string,
-  transaction: TransactionDocument,
+  transaction: Transaction,
   errorMessage: string,
   retryAfterMs: number | undefined,
 ): Promise<void> {
-  const delayMs = retryAfterMs ?? backoffWithJitter(transaction.classification.attempts);
-  await scheduleRetry(organisationId, transaction._id.toString(), errorMessage, new Date(Date.now() + delayMs));
+  const delayMs = retryAfterMs ?? backoffWithJitter(transaction.attempts);
+  await scheduleRetry(organisationId, transaction.id, errorMessage, new Date(Date.now() + delayMs));
 }
 
-async function classifyTransaction(transaction: TransactionDocument): Promise<void> {
-  const organisationId = transaction.organisationId.toString();
-  const transactionId = transaction._id.toString();
+async function classifyTransaction(transaction: Transaction): Promise<void> {
+  const organisationId = transaction.organisationId;
+  const transactionId = transaction.id;
   const input: ClassifyInput = {
     narration: transaction.narration,
     merchant: transaction.merchant,
@@ -201,7 +201,7 @@ async function classifyTransaction(transaction: TransactionDocument): Promise<vo
 
 /**
  * A manual correction: writes the event and updates the transaction in one
- * multi-document transaction (models/transaction.model.ts's applyCorrection),
+ * database transaction (applyCorrection in repositories/transactions.repository.ts),
  * then resolves any LOW_CONFIDENCE or CLASSIFICATION_FAILED flag on it, since a
  * human has just done what those flags were asking for.
  */
@@ -217,20 +217,40 @@ export async function correctClassification(
   await resolveOpenFlagsForTransaction(organisationId, transactionId, ['LOW_CONFIDENCE', 'CLASSIFICATION_FAILED'], actorUserId);
 }
 
-/** Claims and classifies one transaction. Called in a loop by the worker. */
-export async function processOneClaimedTransaction(): Promise<'claimed' | 'empty'> {
-  const transaction = await claimNextTransaction(config.WORKER_LOCK_MS);
-  if (!transaction) {
-    return 'empty';
-  }
+async function processTransaction(transaction: Transaction): Promise<void> {
   try {
     await classifyTransaction(transaction);
     // Duplicate/large-payment detection is about the raw transaction, not its
     // category, so it runs regardless of whether classification succeeded.
-    await runDetectors(transaction.organisationId.toString(), transaction);
+    await runDetectors(transaction.organisationId, transaction);
   } catch (error) {
-    // Name the transaction in the log; the loop in claimLoop.ts carries on.
-    throw new Error(`Processing transaction ${transaction._id.toString()} failed: ${(error as Error).message}`, { cause: error });
+    throw new Error(`Processing transaction ${transaction.id} failed: ${(error as Error).message}`, { cause: error });
   }
+}
+
+/**
+ * Claims up to `limit` due transactions in one query and processes them
+ * concurrently. One failing doesn't stop the others: its error is logged,
+ * and it stays locked until WORKER_LOCK_MS passes, then gets reclaimed.
+ * Returns how many were claimed, so the loop knows whether to sleep.
+ */
+export async function processClaimedBatch(limit: number): Promise<number> {
+  const transactions = await claimDueTransactions(limit, config.WORKER_LOCK_MS);
+  const results = await Promise.allSettled(transactions.map(processTransaction));
+  for (const result of results) {
+    if (result.status === 'rejected') {
+      logger.error('transaction_processing_failed', { error: result.reason });
+    }
+  }
+  return transactions.length;
+}
+
+/** Claims and processes exactly one transaction. Tests use this to step the worker one row at a time. */
+export async function processOneClaimedTransaction(): Promise<'claimed' | 'empty'> {
+  const [transaction] = await claimDueTransactions(1, config.WORKER_LOCK_MS);
+  if (!transaction) {
+    return 'empty';
+  }
+  await processTransaction(transaction);
   return 'claimed';
 }

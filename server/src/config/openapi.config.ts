@@ -230,7 +230,7 @@ export const openApiSpec = {
       },
       get: {
         summary: 'List transactions',
-        description: 'Keyset pagination on (date, _id). cursor is opaque; there is no offset/skip.',
+        description: 'Keyset pagination on (date, id). cursor is opaque; there is no offset/skip.',
         security: bearerAuth,
         parameters: [
           { name: 'cursor', in: 'query', schema: { type: 'string' } },
