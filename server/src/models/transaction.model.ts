@@ -547,6 +547,10 @@ export interface CategorySpend {
 export interface DashboardTotals {
   inflowsKobo: bigint;
   outflowsKobo: bigint;
+  // Money moved between the organisation's own accounts. Each one shows up
+  // as a debit on one account and a credit on another, so counting it would
+  // inflate inflows and outflows equally and make it look like spending.
+  internalTransfersKobo: bigint;
   spendingByCategory: CategorySpend[];
   pendingClassificationCount: number;
 }
@@ -568,19 +572,27 @@ export async function summarizeTransactions(organisationId: string, range: Dashb
 
   // $sum over amountKobo (a Long) stays a 64-bit integer on the server;
   // useBigInt64 on the driver brings it back as bigint, not a double.
+  const isTransfer = { $eq: [{ $ifNull: ['$category.value', null] }, 'TRANSFERS'] };
   const [totals] = await TransactionModel.aggregate([
     { $match: match },
     {
       $group: {
         _id: null,
-        inflowsKobo: { $sum: { $cond: [{ $eq: ['$direction', 'credit'] }, '$amountKobo', 0n] } },
-        outflowsKobo: { $sum: { $cond: [{ $eq: ['$direction', 'debit'] }, '$amountKobo', 0n] } },
+        inflowsKobo: {
+          $sum: { $cond: [{ $and: [{ $eq: ['$direction', 'credit'] }, { $not: [isTransfer] }] }, '$amountKobo', 0n] },
+        },
+        outflowsKobo: {
+          $sum: { $cond: [{ $and: [{ $eq: ['$direction', 'debit'] }, { $not: [isTransfer] }] }, '$amountKobo', 0n] },
+        },
+        internalTransfersKobo: {
+          $sum: { $cond: [{ $and: [{ $eq: ['$direction', 'debit'] }, isTransfer] }, '$amountKobo', 0n] },
+        },
       },
     },
   ]);
 
   const spendingByCategory = await TransactionModel.aggregate([
-    { $match: { ...match, direction: 'debit', 'category.value': { $ne: null } } },
+    { $match: { ...match, direction: 'debit', 'category.value': { $nin: [null, 'TRANSFERS'] } } },
     { $group: { _id: '$category.value', totalKobo: { $sum: '$amountKobo' } } },
     { $sort: { totalKobo: -1 } },
   ]);
@@ -593,6 +605,7 @@ export async function summarizeTransactions(organisationId: string, range: Dashb
   return {
     inflowsKobo: totals?.inflowsKobo ?? 0n,
     outflowsKobo: totals?.outflowsKobo ?? 0n,
+    internalTransfersKobo: totals?.internalTransfersKobo ?? 0n,
     spendingByCategory: spendingByCategory.map((row) => ({ category: row._id as Category, totalKobo: row.totalKobo as bigint })),
     pendingClassificationCount,
   };

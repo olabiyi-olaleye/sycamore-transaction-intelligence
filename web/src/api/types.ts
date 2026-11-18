@@ -81,6 +81,7 @@ export interface DashboardSummary {
   inflows: string;
   outflows: string;
   net: string;
+  internalTransfers: string;
   spendingByCategory: Array<{ category: string; total: string }>;
   pendingClassificationCount: number;
   openFlagCount: number;

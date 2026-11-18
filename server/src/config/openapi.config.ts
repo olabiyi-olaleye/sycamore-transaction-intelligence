@@ -387,7 +387,7 @@ export const openApiSpec = {
     },
     '/classification/retry-failed': {
       post: {
-        summary: "Requeue the caller organisation's failed classifications",
+        summary: "Requeue the caller organisation's failed classifications (admin only)",
         description:
           'Moves every transaction with classification.status "failed" back to "pending" with its counters reset. Their CLASSIFICATION_FAILED flags are resolved by the worker as each one classifies.',
         security: bearerAuth,
@@ -397,6 +397,7 @@ export const openApiSpec = {
             content: { 'application/json': { schema: { type: 'object', properties: { requeued: { type: 'integer' } } } } },
           },
           401: errorResponses[401],
+          403: { description: 'The caller is not an admin' },
         },
       },
     },
@@ -419,6 +420,10 @@ export const openApiSpec = {
                     inflows: { type: 'string' },
                     outflows: { type: 'string' },
                     net: { type: 'string' },
+                    internalTransfers: {
+                      type: 'string',
+                      description: 'Total moved between the organisation\'s own accounts (category TRANSFERS). Excluded from inflows, outflows and spendingByCategory.',
+                    },
                     spendingByCategory: {
                       type: 'array',
                       items: { type: 'object', properties: { category: { type: 'string', enum: categoryEnum }, total: { type: 'string' } } },

@@ -258,7 +258,7 @@ describe('POST /api/v1/classification/retry-failed', () => {
     const org = await createOrganisation('Retry Failed Co');
     const orgId = org._id.toString();
     const email = uniqueEmail('retry-failed');
-    await createUser(orgId, { email, password });
+    await createUser(orgId, { email, password, role: 'admin' });
     const account = await createAccount(orgId);
     const tx = await createTransaction(orgId, {
       accountId: account._id.toString(),
@@ -312,6 +312,27 @@ describe('POST /api/v1/classification/retry-failed', () => {
     expect(final?.reviewStatus).toBe('resolved');
     const flag = await ReviewFlagModel.findOne({ organisationId: orgId, transactionId: tx._id, type: 'CLASSIFICATION_FAILED' }).lean();
     expect(flag?.status).toBe('resolved');
+  });
+});
+
+describe('POST /api/v1/classification/retry-failed as a member', () => {
+  it('returns 403 and requeues nothing', async () => {
+    const password = 'retry-failed-member-password';
+    const org = await createOrganisation('Retry Failed Member Co');
+    const orgId = org._id.toString();
+    const email = uniqueEmail('retry-failed-member');
+    await createUser(orgId, { email, password, role: 'member' });
+    const account = await createAccount(orgId);
+    const tx = await createTransaction(orgId, { accountId: account._id.toString(), amountKobo: 15000n, direction: 'debit', date: new Date(), classificationStatus: 'failed' });
+
+    const app = buildApp();
+    const login = await request(app).post('/api/v1/auth/login').send({ email, password });
+    const response = await request(app).post('/api/v1/classification/retry-failed').set('authorization', `Bearer ${login.body.token}`);
+
+    expect(response.status).toBe(403);
+    expect(response.body.error.code).toBe('FORBIDDEN');
+    const reread = await TransactionModel.findOne({ organisationId: orgId, _id: tx._id }).lean();
+    expect(reread?.classification.status).toBe('failed');
   });
 });
 

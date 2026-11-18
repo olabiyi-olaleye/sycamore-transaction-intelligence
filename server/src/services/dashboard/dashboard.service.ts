@@ -7,6 +7,7 @@ export interface DashboardSummaryView {
   inflows: string;
   outflows: string;
   net: string;
+  internalTransfers: string;
   spendingByCategory: Array<{ category: string; total: string }>;
   pendingClassificationCount: number;
   openFlagCount: number;
@@ -23,6 +24,7 @@ export async function getDashboardSummary(organisationId: string, query: Dashboa
     inflows: formatKoboAsAmount(totals.inflowsKobo),
     outflows: formatKoboAsAmount(totals.outflowsKobo),
     net: netKobo < 0n ? `-${formatKoboAsAmount(-netKobo)}` : formatKoboAsAmount(netKobo),
+    internalTransfers: formatKoboAsAmount(totals.internalTransfersKobo),
     spendingByCategory: totals.spendingByCategory.map((row) => ({
       category: row.category,
       total: formatKoboAsAmount(row.totalKobo),

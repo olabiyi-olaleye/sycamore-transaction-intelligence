@@ -42,6 +42,11 @@ export function DashboardPage() {
             <div className="stat-card__value financial-value">{formatNaira(summary.net)}</div>
           </div>
           <div className="stat-card">
+            <span className="micro-label">Between own accounts</span>
+            <div className="stat-card__value financial-value">{formatNaira(summary.internalTransfers)}</div>
+            <span className="micro-label">Not counted in inflows, outflows or spending</span>
+          </div>
+          <div className="stat-card">
             <span className="micro-label">Pending classification</span>
             <div className="stat-card__value pending">{summary.pendingClassificationCount}</div>
           </div>

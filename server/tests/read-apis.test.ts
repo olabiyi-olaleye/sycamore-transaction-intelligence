@@ -175,6 +175,9 @@ describe('GET /api/v1/dashboard/summary', () => {
     await createTransaction(orgId, { accountId, amountKobo: 75000n, direction: 'debit', date: day(3), category: { value: 'SOFTWARE', source: 'rule', confidence: 0.9 } }); // 750.00
     await createTransaction(orgId, { accountId, amountKobo: 1000000n, direction: 'debit', date: day(4), category: { value: 'RENT', source: 'human', confidence: 1 } }); // 10,000.00
     await createTransaction(orgId, { accountId, amountKobo: 5000n, direction: 'debit', date: day(5), classificationStatus: 'pending' }); // 50.00, still pending
+    // An own-account transfer, out of one account and into another: excluded everywhere.
+    await createTransaction(orgId, { accountId, amountKobo: 90000000n, direction: 'debit', date: day(6), category: { value: 'TRANSFERS', source: 'rule', confidence: 0.93 } });
+    await createTransaction(orgId, { accountId, amountKobo: 90000000n, direction: 'credit', date: day(6), category: { value: 'TRANSFERS', source: 'rule', confidence: 0.93 } });
 
     const response = await request(app).get('/api/v1/dashboard/summary').set('authorization', authHeader);
     expect(response.status).toBe(200);
@@ -182,6 +185,8 @@ describe('GET /api/v1/dashboard/summary', () => {
     expect(response.body.inflows).toBe('1500000.75');
     expect(response.body.outflows).toBe('11050.00');
     expect(response.body.net).toBe('1488950.75');
+    expect(response.body.internalTransfers).toBe('900000.00');
+    expect(response.body.spendingByCategory.find((row: { category: string }) => row.category === 'TRANSFERS')).toBeUndefined();
     expect(response.body.pendingClassificationCount).toBeGreaterThanOrEqual(1);
 
     const software = response.body.spendingByCategory.find((row: { category: string }) => row.category === 'SOFTWARE');

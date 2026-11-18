@@ -261,6 +261,15 @@ place it compares amounts by magnitude (sizing a spending bar) does the comparis
 `bigint`, converting to a JS number only for the final 0-100 percentage, which is already a small
 exact integer with nothing to lose.
 
+**Own-account transfers on the dashboard.** Moving ₦900,000 from the operating account to
+the payroll account is one debit and one credit inside the same business. Counting both
+would inflate inflows and outflows by the same amount and show the move as spending, so
+transactions categorised `TRANSFERS` are left out of inflows, outflows and spending by
+category, and reported on their own as `internalTransfers` ("Between own accounts" on the
+dashboard). Net cash flow is the same either way. This depends on the transfer being
+categorised correctly, which the rules handle for the narrations in the seed data; a
+mis-categorised transfer would show up in spending until someone corrects it.
+
 ## 5. Tenant isolation
 
 Three layers, as specified:
@@ -366,7 +375,7 @@ Other, and a debit is never Revenue.
 
 ## 7. Testing
 
-104 tests, Vitest, `supertest` against the Express app, run against a real MongoDB replica
+105 tests, Vitest, `supertest` against the Express app, run against a real MongoDB replica
 set (no mocked database). `server/tests/setup.ts` connects once per run; most fixtures use a
 fresh organisation/user per test so tests never depend on execution order. The one
 exception is `classification.test.ts`, which documents at the top of the file why it drains
@@ -390,9 +399,13 @@ real stack rather than with a Vitest/RTL suite (see §10).
 - **NGN only.** `currency` must be exactly `"NGN"`; anything else is a validation error.
   Multi-currency would need an FX layer and a currency-aware `largePaymentMultiple`, out of
   scope here.
-- **Roles are stored but not enforced.** `admin`/`member` exist on `User`, but no endpoint
-  checks either: anyone authenticated in an organisation can import, correct, and resolve.
-  A reasonable cut for a prototype at this scope; real role-gating would be next.
+- **Roles are only enforced where the blast radius is organisation-wide.** Requeueing every
+  failed classification (`POST /classification/retry-failed`) needs `admin` and returns
+  `403` for a `member` (`middleware/requireRole.middleware.ts`). Importing, correcting a
+  category and resolving a flag are open to any member, since that's the day-to-day finance
+  work and every correction is recorded with who made it. A real deployment would likely
+  want finer permissions (for example, members can correct but only admins can resolve an
+  `UNUSUALLY_LARGE` flag).
 - **Login rate limiting and the classification circuit breaker are in-memory,
   per-process.** Correct for one API/worker instance; a horizontally scaled deployment would
   need both moved to a shared store (Redis), as noted at each definition site.
@@ -473,7 +486,7 @@ and if it's just sitting there un-mined, that's the real process gap to close.
 - No automated UI test suite; the web app was verified against the real stack in a browser
   rather than with Playwright/RTL.
 - `minAmount`/`maxAmount` filters exist in the API but not the Transactions page's UI.
-- No role gating, no admin/invite endpoints, no CI pipeline config.
+- Only one admin-gated endpoint, no admin/invite endpoints, no CI pipeline config.
 - Login rate limiting and the classification circuit breaker are per-process; both are
   clearly marked at their definition site as the first things to move to a shared store in a
   multi-instance deployment.

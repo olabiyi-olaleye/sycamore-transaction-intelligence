@@ -2415,7 +2415,7 @@
     },
     "/classification/retry-failed": {
       "post": {
-        "summary": "Requeue the caller organisation's failed classifications",
+        "summary": "Requeue the caller organisation's failed classifications (admin only)",
         "description": "Moves every transaction with classification.status \"failed\" back to \"pending\" with its counters reset. Their CLASSIFICATION_FAILED flags are resolved by the worker as each one classifies.",
         "security": [
           {
@@ -2469,6 +2469,9 @@
                 }
               }
             }
+          },
+          "403": {
+            "description": "The caller is not an admin"
           }
         }
       }
@@ -2515,6 +2518,10 @@
                     },
                     "net": {
                       "type": "string"
+                    },
+                    "internalTransfers": {
+                      "type": "string",
+                      "description": "Total moved between the organisation's own accounts (category TRANSFERS). Excluded from inflows, outflows and spendingByCategory."
                     },
                     "spendingByCategory": {
                       "type": "array",
