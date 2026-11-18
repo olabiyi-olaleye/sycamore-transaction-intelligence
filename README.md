@@ -1,503 +1,335 @@
 # Sycamore Transaction Intelligence Platform
 
-A multi-tenant transaction import, AI-assisted categorisation, and human review platform
-for Nigerian businesses, built for the Sycamore Capital Group technical assessment.
+A multi-tenant platform for Nigerian businesses to import transactions, have them
+categorised automatically, see which ones need a human to look at them, and correct the
+categories. Built for the Sycamore Capital Group technical assessment.
 
-I am not expected to have built a production-complete system in this time box. What follows
-explains what I built, why, and what I'd do differently with more time.
+Backend: Node.js, TypeScript, Express, PostgreSQL 16 with Prisma. Frontend: React with Vite.
 
 ## 1. Running it
 
-### Prerequisites
+### With Docker (recommended)
 
-- **Docker + Docker Compose** (the recommended path; this is all you need), **or**
-- **Node.js 22+** and a MongoDB 7 replica set of your own, if you'd rather run it without
-  Docker (see [Running without Docker](#running-without-docker) below).
+You need Docker with Compose. From the repository root:
 
-### Quick start (Docker)
+1. Create `.env` in the repo root:
 
-From the repository root:
+   ```
+   JWT_SECRET=<a long random string>
+   SEED_PASSWORD=Passw0rd!2024
+   ```
 
-**1. Generate a JWT secret:**
+   Generate a secret with `node -e "console.log(require('crypto').randomBytes(64).toString('hex'))"`.
+   The database passwords have local development defaults in `docker-compose.yml`; set
+   `POSTGRES_PASSWORD`, `APP_DB_PASSWORD` or `SYSTEM_DB_PASSWORD` here to override them.
 
-```bash
-node -e "console.log(require('crypto').randomBytes(64).toString('hex'))"
-```
+2. Create `server/.env`, used when you run the seed or tests from your machine:
 
-**2. Create `.env` in the repo root** (read by `docker-compose.yml` for the container
-environment) with:
+   ```
+   DATABASE_URL=postgresql://sycamore_app:app_dev_password@localhost:5432/sycamore
+   SYSTEM_DATABASE_URL=postgresql://sycamore_system:system_dev_password@localhost:5432/sycamore
+   MIGRATE_DATABASE_URL=postgresql://postgres:postgres@localhost:5432/sycamore
+   JWT_SECRET=<the same value as above>
+   SEED_PASSWORD=Passw0rd!2024
+   ```
 
-```
-JWT_SECRET=<paste the generated value>
-SEED_PASSWORD=Passw0rd!2024
-MOCK_LLM_MODE=ok
-MOCK_LLM_FAILURE_RATE=0
-```
+3. Start everything and load the sample data:
 
-**3. Create `server/.env`** (read when `npm run seed` runs from your host instead of inside
-a container) with:
+   ```bash
+   docker compose up -d --build
+   cd server && npm install && npm run seed
+   ```
 
-```
-NODE_ENV=development
-PORT=4000
-MONGO_URI=mongodb://localhost:27017/sycamore?replicaSet=rs0&directConnection=true
-JWT_SECRET=<the same value as above>
-LOG_LEVEL=info
-CLASSIFIER_PROVIDER=mock
-MOCK_LLM_MODE=ok
-MOCK_LLM_FAILURE_RATE=0
-WORKER_POLL_INTERVAL_MS=1000
-WORKER_LOCK_MS=30000
-SEED_PASSWORD=Passw0rd!2024
-```
+   Compose starts Postgres, applies the migrations (`migrate` service), then starts the
+   API on :4000, the classification worker and the web app on :5173.
 
-**4. Build and start MongoDB (as a replica set), the API, the classification worker, and
-the web app:**
+4. Wait a few seconds for the worker to categorise the seeded transactions, then open
+   http://localhost:5173 and sign in:
 
-```bash
-docker compose up -d --build
-```
+   | Organisation | Email | Role |
+   |---|---|---|
+   | Lagos Fresh Foods Ltd | `adaeze.okafor@lagosfreshfoods.ng` | admin |
+   | Lagos Fresh Foods Ltd | `tunde.balogun@lagosfreshfoods.ng` | member |
+   | Nimbus Cloud Systems Ltd | `chidi.eze@nimbuscloud.ng` | admin |
+   | Nimbus Cloud Systems Ltd | `funmi.adeyemi@nimbuscloud.ng` | member |
 
-**5. Load two organisations and ~400 transactions through the real import API:**
+   Every seed user's password is `SEED_PASSWORD`.
 
-```bash
-cd server && npm run seed
-```
+`curl http://localhost:4000/health` should report `"status":"ok"` and an empty
+classification queue. `docker compose down -v` stops everything and deletes the data.
 
-Give the worker a few seconds to classify the newly seeded transactions, then open
-**http://localhost:5173** and log in as:
+### Without Docker
 
-| Organisation | Email | Password |
-|---|---|---|
-| Lagos Fresh Foods Ltd (food retail) | `adaeze.okafor@lagosfreshfoods.ng` | `Passw0rd!2024` |
-| Nimbus Cloud Systems Ltd (SaaS) | `chidi.eze@nimbuscloud.ng` | `Passw0rd!2024` |
-
-(The password is `Passw0rd!2024`, the `SEED_PASSWORD` in `server/.env` above; both seed
-organisations use it.)
-
-**Checking it's actually up**, if anything looks wrong:
+You need Node.js 22+ and PostgreSQL 16. As a superuser, create a `sycamore` database and
+the two roles the app connects as:
 
 ```bash
-docker compose ps                              # all five services should be "running"
-curl http://localhost:4000/health              # {"status":"ok","db":"connected","classificationQueue":{...}}
-curl -o /dev/null -w "%{http_code}\n" http://localhost:5173   # 200
+psql -U postgres -c "CREATE DATABASE sycamore"
+psql -U postgres -v app_password=app_dev_password -v system_password=system_dev_password \
+  -v db_name=sycamore -f server/prisma/init/roles.sql
 ```
 
-**Stopping it:**
+Then, with `server/.env` as above and `web/.env` containing
+`VITE_API_URL=http://localhost:4000/api/v1`:
 
 ```bash
-docker compose down            # stops and removes the containers, keeps the data
-docker compose down -v         # also deletes the MongoDB data volume (next start reseeds clean)
+cd server && npm install && npm run db:migrate && npm run seed
+npm run dev          # API on :4000
+npm run worker       # classification worker, in a second terminal
+cd ../web && npm install && npm run dev   # web app on :5173
 ```
 
-**If you change any source file** after the stack is already running, the containers won't
-pick it up automatically: `docker compose up -d --build` only copies code in at image-build
-time, it isn't a live mount. Re-run `docker compose up -d --build` (optionally with just the
-one service that changed, e.g. `docker compose up -d --build web`) to rebuild and restart.
+### Commands
 
-### Running without Docker
-
-Create `server/.env` with the same content shown in step 3 above, but point `MONGO_URI` at
-your own replica set. Create `web/.env` with:
-
-```
-VITE_API_URL=http://localhost:4000/api/v1
-```
-
-Then:
-
-```bash
-cd server && npm install && npm run dev      # terminal 1: the API, on :4000
-cd server && npm run worker                  # terminal 2: the classification worker
-cd web && npm install && npm run dev         # terminal 3: the web app, on :5173
-```
-
-`JWT_SECRET` is never committed and never hardcoded in source; it's read once, at startup,
-via `process.env.JWT_SECRET` (`server/src/config/env.ts`).
-
-Then, from `server/`, run `npm run seed` once to load the sample data (needs `server/.env`
-in place so it can reach your MongoDB). Your own MongoDB must be running as a replica set,
-even a single-node one, because the correction endpoint uses a multi-document transaction,
-which Mongo only supports on a replica set.
-
-### Command reference
-
-| Command | Where | What it does |
-|---|---|---|
-| `docker compose up -d --build` | repo root | Build and start everything |
-| `docker compose down` | repo root | Stop everything |
-| `docker compose logs -f api\|worker\|web\|mongo` | repo root | Tail one service's logs |
-| `npm run dev` | `server/` | Run the API with hot reload |
-| `npm run worker` | `server/` | Run the classification worker |
-| `npm test` | `server/` | Run the API test suite (needs Mongo reachable) |
-| `npm run typecheck` | `server/` or `web/` | Type-check without emitting |
-| `npm run seed` | `server/` | Load the sample organisations/accounts/transactions (idempotent, safe to re-run) |
-| `npm run openapi` | `server/` | Regenerate `docs/openapi.json` |
-| `npm run requeue-failed` | `server/` | Put every organisation's failed classifications back in the queue |
-| `npm run dev` | `web/` | Run the web app with hot reload |
-| `npm run build` | `web/` | Type-check and build the web app for production |
+| Command (in `server/`) | What it does |
+|---|---|
+| `npm run dev` / `npm run worker` | API / worker with reload |
+| `npm test` | All tests, against a throwaway `sycamore_test` database |
+| `npm run typecheck` | Type-check source and tests |
+| `npm run seed` | Load the sample data (safe to re-run) |
+| `npm run db:migrate` | Apply migrations (`prisma migrate deploy`) |
+| `npm run db:status` | Show which migrations are applied |
+| `npm run requeue-failed` | Put every organisation's failed classifications back in the queue |
+| `npm run openapi` | Regenerate `docs/openapi.json` |
 
 ## 2. Architecture
 
 ```
-server/src/
-  config/        env parsing, DB connection, OpenAPI spec; the process exits on invalid config
-  constants/     the fixed category list
-  context/       AsyncLocalStorage-based request context (organisationId, userId, role)
-  controllers/   parses the request, calls the service, sends the response
-  middleware/    request id, JWT auth, login rate limiting, the global error handler
-  models/        Mongoose schemas plus the data-access functions for each collection
-                 (no separate repository layer; services never import Mongoose directly)
-  routes/        Express Router() wiring per resource
-  services/      the rules: idempotency, tenant checks, orchestration
-    auth/        argon2 verify + JWT sign/verify
-    classification/  rules engine, mock LLM provider, the worker's claim loop
-    review/      duplicate/large-payment detectors
-  seed/          deterministic seed data, loaded through the real import service
-  utils/         money (kobo) parsing/formatting, cursor encoding, typed errors, JSON logger
-  validation/    Zod schemas at the HTTP boundary
-  app.ts         builds the Express app: middleware, routes, error handling
-  index.ts       API process entry point
-  worker.ts      worker process entry point
-web/src/
-  api/           typed fetch client
-  auth/          token + user in localStorage
-  components/    Layout, MoneyValue, StatusBadge, SpendingBars
-  pages/         Dashboard, Transactions, Transaction detail/review
+server/
+  prisma/
+    schema.prisma        tables, keys, indexes
+    migrations/          SQL, including what Prisma can't express (see §5)
+    init/roles.sql       the two database roles the app connects as
+  src/
+    config/              env validation (the process exits on bad config), OpenAPI spec
+    context/             per-request context: requestId, organisationId, userId, role
+    db/                  Prisma clients for the two roles; withTenant()
+    repositories/        every database query lives here
+    services/            business rules: imports, classification, review, dashboard
+    controllers/ routes/ middleware/ validation/   the HTTP layer
+    utils/               money (kobo) parsing, cursors, typed errors, JSON logger
+    index.ts  worker.ts  the two processes
+web/src/                 React app: Dashboard, Transactions, Transaction review
 ```
 
-One transaction's life, import to corrected category:
+A transaction's life:
 
 ```mermaid
 flowchart LR
-    A["POST /transactions(/batch)"] -->|insert-first; E11000 on retry = duplicate| B[("transactions\nstatus: pending")]
-    B -->|"worker: one atomic findOneAndUpdate"| C{classifyWithRules}
-    C -->|rule hit, confidence >= 0.9| D[("classification_events\nsource: rule")]
-    C -->|no rule| E[Mock LLM provider\n5s timeout, Zod-validated output]
-    E -->|success| D2[("classification_events\nsource: ai")]
-    E -->|"down / timeout / rate limited\n(never gives up)"| F["backoff + jitter, capped at 60s\nnextAttemptAt = now + delay"]
-    E -->|"invalid answer, fewer than 5 so far"| F
+    A["POST /transactions(/batch)"] -->|"INSERT ... ON CONFLICT DO NOTHING"| B[("transactions\nstatus: pending")]
+    B -->|"worker: claim a batch\nFOR UPDATE SKIP LOCKED"| C{rules}
+    C -->|match| D[("classification_events\nsource: rule")]
+    C -->|no match| E["AI provider\n5s timeout, validated answer"]
+    E -->|answer| D2[("classification_events\nsource: ai")]
+    E -->|"down / slow / rate limited"| F["retry with backoff,\nnever gives up"]
+    E -->|"unusable answer"| F2["retry; after 5,\nstatus failed + flag"]
     F --> B
-    E -->|"5th invalid answer"| G["status: failed\n+ CLASSIFICATION_FAILED flag"]
-    G -->|"POST /classification/retry-failed\nor npm run requeue-failed"| B
-    D --> H{confidence < 0.6?}
+    F2 --> B
+    D --> H{"confidence < 0.6?"}
     D2 --> H
     H -->|yes| I[("review_flags\nLOW_CONFIDENCE")]
-    H -->|no| J[transaction.category set]
-    I --> K["GET /review/flags\n(web: Dashboard, Transaction review)"]
-    K -->|"POST /transactions/:id/corrections"| L["classification_events: source=human\n+ transaction.category updated\n(one multi-doc transaction)"]
-    L --> M["resolves LOW_CONFIDENCE /\nCLASSIFICATION_FAILED on it"]
+    I --> K["Review in the web app"]
+    K -->|"POST /transactions/:id/corrections"| L["new classification_event (human)\n+ category updated, one DB transaction"]
 ```
 
-Two detectors (`POSSIBLE_DUPLICATE`, `UNUSUALLY_LARGE`) run after every classification
-attempt, independent of whether it succeeded. They're about the raw transaction, not its
-category. `POSSIBLE_DUPLICATE` looks for the same amount from the same account under a
-different reference within 24 hours. `UNUSUALLY_LARGE` compares a debit with the account's
-median debit over 90 days, but skips one that repeats a similar payment (within 5%) from
-20-40 days earlier, so a monthly payroll top-up or rent payment isn't flagged every month.
+After each classification attempt two detectors look at the raw transaction:
+`POSSIBLE_DUPLICATE` (same amount, account and direction under a different reference within
+24 hours) and `UNUSUALLY_LARGE` (a debit more than the organisation's multiple, default 5x, of
+the account's median debit over 90 days, unless a similar payment went out 20 to 40 days
+earlier, which makes it a monthly payment like payroll or rent). Every flag carries a
+sentence saying why, with naira amounts.
 
 ## 3. Decisions and why
 
-- **Express** over Fastify/NestJS: the most widely known Node HTTP framework, with a
-  middleware model that maps directly onto the three-layer tenant isolation design: a
-  public router, then a second `Router()` with `authMiddleware` mounted on it before any
-  protected route, so the auth check lives in exactly one place (`server/src/app.ts`). The
-  one thing Fastify gives for free that Express doesn't is forwarding a rejected promise from
-  an async handler to the error middleware; `utils/asyncHandler.ts` wraps every controller to
-  cover that gap.
-- **MongoDB** for financial data: the honest case against it is that it enforces nothing
-  about tenant isolation, referential integrity, or numeric precision on its own. Three
-  specific gaps, each covered by something explicit rather than by convention:
-  - Tenant isolation: a Mongoose plugin (`models/tenantPlugin.ts`) throws on any query/update/
-    aggregate against a tenant collection with no `organisationId` in the filter.
-  - Numeric precision: amounts are stored as 64-bit `Long`, never `Double`; see §4.
-  - Referential integrity (nothing stops an `accountId` pointing at a deleted account): the
-    data-access functions in `models/` are the only code that writes, and every write path
-    that creates a transaction first confirms the account exists in the caller's organisation.
-  What Mongo *does* give for free that mattered: a document model that fits "a transaction
-  carries its own classification state" far more naturally than a normalized row would, and
-  multi-document transactions (replica set required, which is why `docker-compose.yml`'s
-  `mongo-init` runs `rs.initiate()`) for the one place two documents must change atomically
-  (a correction).
-- **No external queue.** The transaction document *is* the queue entry: `classification.
-  {status, attempts, nextAttemptAt, lockedUntil}` plus one atomic `findOneAndUpdate` claim
-  (`models/transaction.model.ts`) gets retry, backoff, and crash recovery (an expired lock
-  gets reclaimed) without running or operating Redis/SQS/RabbitMQ. The cost: no priority
-  ordering beyond "oldest due first," and polling (`WORKER_POLL_INTERVAL_MS`) instead of a
-  push. See design scenario 3 for where this stops being the right call.
-- **Rules before AI, always.** A rule hit is free, instant, and auditable (`rules.ts`); the
-  AI step only ever sees narrations rules couldn't decide. This is also why ingestion never
-  touches the classification provider at all; the two are fully decoupled modules.
+**PostgreSQL, not MongoDB.** I started this project on MongoDB and moved it to Postgres; the
+commit history shows both. For money, I want the database to enforce the rules rather than
+trust the application to: `BIGINT` amounts with a `CHECK (amount_kobo > 0)`, foreign keys
+that include the organisation so a transaction can't point at another tenant's account,
+row-level security so the database itself refuses cross-tenant reads, and ordinary
+transactions without a replica set. Mongo can be made correct for this, and the earlier
+version was, but every one of those guarantees lived in my code.
+
+**Prisma.** Typed queries and a readable schema for the common cases. Where it can't express
+something, I use plain SQL rather than fight it: the CHECK constraints, trigger and policies
+are in the migration file, and three queries use `$queryRaw` (the worker's claim, the
+dashboard totals and the median for the large-payment detector).
+
+**The transactions table is the queue.** Each row carries `classification_status`,
+`attempts`, `next_attempt_at` and `locked_until`. The worker claims up to 25 due rows with one
+`UPDATE ... WHERE id IN (SELECT ... FOR UPDATE SKIP LOCKED)`, so several workers can run
+side by side without waiting on each other or claiming the same row (there's a test for
+that). A crashed worker's rows are reclaimed once their lock expires. This avoids running
+Redis or SQS for a prototype; scenario 3 covers when that stops being enough.
+
+**Rules before AI.** A rule hit is free, instant and explainable, so the provider only sees
+narrations the rules can't decide. Imports never touch the classification code at all.
+
+**Express**, because it's widely known and its router makes the auth boundary obvious:
+public routes, then one router with `authMiddleware` mounted on it for everything else.
 
 ## 4. Financial correctness
 
-Worked example: **₦12,999.75**.
+Worked example, **₦12,999.75**:
 
-1. The API rejects anything that isn't a string matching `^\d+(\.\d{1,2})?$`. A JSON number
-   (`12999.75`) is rejected with a message saying why, not silently coerced.
-2. `parseAmountToKobo` (`server/src/utils/money.ts`) splits on the decimal point and combines
-   with `bigint` multiplication: `12999n * 100n + 75n = 1299975n`. No `parseFloat`, no
-   `Number()`, no `* 100`.
-3. Stored as `Schema.Types.BigInt` → BSON `Long`. The driver is configured with
-   `useBigInt64: true` (`config/database.ts`), so it round-trips back out as a native
-   `bigint`, not the `mongodb.Long` wrapper object. This is proved with a test that stores and
-   rereads a value above `Number.MAX_SAFE_INTEGER` (`tests/ingestion.test.ts`).
-4. Summed in aggregation (dashboard totals, spending by category) as `Long` the whole way.
-   MongoDB's `$sum` over an integer BSON type stays integer server-side, and `useBigInt64`
-   is what brings that back as `bigint` client-side instead of silently widening to a
-   double.
-5. Formatted back to `"12999.75"` by `formatKoboAsAmount`, again by string construction, not
-   division.
+1. The API only accepts the amount as a string matching `^\d+(\.\d{1,2})?$`. A JSON number
+   (`12999.75`) is rejected with a message explaining why, not coerced.
+2. `parseAmountToKobo` (`utils/money.ts`) splits on the decimal point and builds a `bigint`:
+   `12999n * 100n + 75n = 1299975n`. No `parseFloat`, no `Number()`, no `* 100`.
+3. Stored in a `BIGINT` column with `CHECK (amount_kobo > 0)`; the direction carries the sign.
+   A test writes and reads back a value above `Number.MAX_SAFE_INTEGER` unchanged.
+4. Totals are summed in SQL and cast back to `BIGINT` (`SUM` over `BIGINT` returns `NUMERIC`
+   in Postgres), so they arrive as exact bigints.
+5. Formatted back to `"12999.75"` by string construction. The large-payment median uses
+   `percentile_disc`, which returns one of the real amounts, not an interpolated float.
 
-One real bug came out of this area, worth remembering: `Model.aggregate()` does **not** cast
-`$match` against the schema the way `Model.find()` does. Passing the plain string `organisationId`
-into an aggregation pipeline's `$match` compared it against a stored `ObjectId` and matched
-nothing: every dashboard total came back `0`, silently, for every organisation. Fixed with
-an explicit `new mongoose.Types.ObjectId(organisationId)` in `models/transaction.model.ts`'s
-`summarizeTransactions`.
-
-The web app only ever formats these decimal strings (`web/src/money/money.ts`); the one
-place it compares amounts by magnitude (sizing a spending bar) does the comparison in
-`bigint`, converting to a JS number only for the final 0-100 percentage, which is already a small
-exact integer with nothing to lose.
-
-**Own-account transfers on the dashboard.** Moving ₦900,000 from the operating account to
-the payroll account is one debit and one credit inside the same business. Counting both
-would inflate inflows and outflows by the same amount and show the move as spending, so
-transactions categorised `TRANSFERS` are left out of inflows, outflows and spending by
-category, and reported on their own as `internalTransfers` ("Between own accounts" on the
-dashboard). Net cash flow is the same either way. This depends on the transfer being
-categorised correctly, which the rules handle for the narrations in the seed data; a
-mis-categorised transfer would show up in spending until someone corrects it.
+**Transfers between the organisation's own accounts** (a payroll top-up, for example) are one
+debit and one credit inside the same business. Counting them would inflate inflows and
+outflows equally and show the move as spending, so transactions categorised `TRANSFERS` are
+left out of inflows, outflows and spending by category and shown on their own as "Between own
+accounts". Net cash flow is the same either way.
 
 ## 5. Tenant isolation
 
-Three layers, as specified:
+Three layers:
 
-1. **Request context.** `organisationId` is set exactly once, in `middleware/auth.middleware.ts`,
-   from the verified JWT's claim, never read from a body, query string, or path parameter.
-   `requireOrganisationId()` is the only way code gets it.
-2. **Models.** Every data-access function in `models/` takes `organisationId` as a required
-   first argument and puts it in the filter.
-3. **The Mongoose plugin backstop.** `tenantScopePlugin` throws on any `find`/`update`/
-   `aggregate`/`save`/`insertMany` against a tenant collection (`accounts`, `transactions`,
-   `classification_events`, `review_flags`) with no `organisationId` in the filter, as a
-   second line of defence if a model-layer mistake ever shipped.
+1. **Request context.** `organisationId` comes only from the verified JWT, set once in
+   `auth.middleware.ts`, never from a body, query string or path.
+2. **Repositories.** Every query in `repositories/` takes `organisationId` and filters by it.
+3. **Row-level security in Postgres.** Every tenant table has a policy that only shows and
+   accepts rows matching `app.organisation_id`. `withTenant()` (`db/tenant.ts`) runs each
+   piece of work in a transaction that sets it first, with `set_config(..., true)` so it
+   can't leak to the next request on the same pooled connection. With nothing set, every
+   table looks empty. `FORCE ROW LEVEL SECURITY` applies the policies to the table owner too.
 
-**The documented exceptions:**
+The API connects as `sycamore_app`, which is subject to the policies. A second role,
+`sycamore_system` (`BYPASSRLS`), is used only where work has to span organisations, and each
+use is commented: the worker's claim query, the queue counts in `/health`, finding a user by
+email at login (before the organisation is known), and the seed script. After claiming, the
+worker does everything else through `withTenant()`. Migrations run as the database owner, a
+third identity; neither app role can change the schema.
 
-- Two queries bypass the plugin, both in `models/transaction.model.ts`, both commented and
-  both cross-organisation by necessity. The worker's claim query (`claimNextTransaction`)
-  looks across every organisation because it doesn't yet know whose transaction is due
-  next. The queue counts for `GET /health` (`classificationQueueStats`) count rows across
-  all organisations and only ever return numbers, never documents. The operator's
-  `npm run requeue-failed` script is not a bypass: it goes one organisation at a time
-  through the same scoped function the API uses.
-- `users` carries `organisationId` like every other tenant collection, but is **not**
-  wrapped with the plugin: logging in means finding a user by email *alone*, before
-  `organisationId` is known, which is exactly the query the plugin exists to forbid. Rather
-  than mark every login query as a bypass, `users` skips the plugin entirely. Every other
-  read of `users` still takes `organisationId` as an explicit filter (defence in depth, just
-  without the Mongoose-level backstop).
-
-A resource outside the caller's organisation always returns `404`, never `403`. This is tested for
-accounts, transactions, review flags, and corrections.
+A resource from another organisation always returns 404. Tests cover the API (accounts,
+transactions, flags, corrections) and the database directly: a query with no organisation
+filter returns only the current tenant's rows, writing a row for another tenant is refused,
+and a transaction can't reference another tenant's account.
 
 ## 6. AI reliability
 
-`ClassificationProvider` (`services/classification/provider.ts`) is a small interface (one
-`classify(input, signal)` method), and `services/classification/providers.ts` maps a
-`CLASSIFIER_PROVIDER` setting to an implementation. Only `mock` exists today. Adding a real
-vendor means writing one object that implements the interface, registering it there and
-adding its name to the enum in `config/env.ts`; the worker, retries, circuit breaker, review
-flags and history don't change. A test plugs in a fake provider at runtime and checks that
-its answer and its name end up on the transaction and in `classification_events`
-(`classification.test.ts`, "swapping the classification provider"). Rules are deliberately
-*not* an implementation of the interface; they're a synchronous pre-filter that runs first
-and never needs swapping.
+`ClassificationProvider` is a one-method interface (`classify(input, signal)`), and
+`providers.ts` picks the implementation from `CLASSIFIER_PROVIDER`. Only `mock` exists. A real
+vendor would be one more object implementing the interface; the worker, retries, breaker,
+flags and history wouldn't change. A test swaps in a fake provider at runtime to prove it.
 
-Failure handling, all in `classification.service.ts`:
+Failure handling (`classification.service.ts`):
 
-- **5-second timeout** via `AbortController`, regardless of which `MOCK_LLM_MODE` is active.
-- **Zod-validated output** (`validation/classification.validation.ts`): an unknown category or an
-  out-of-range confidence is treated as a failure, not cast.
-- **Exponential backoff with jitter** between attempts, capped at 60s; a rate-limited
-  response honours its own `retryAfterMs` instead of the generic backoff.
-- **Two kinds of failure, treated differently.** If the provider is down, times out or rate
-  limits us, that says nothing about the transaction, so it keeps retrying for as long as
-  the outage lasts and is never marked failed. If the provider answers but the answer is
-  unusable (unknown category, confidence out of range), that counts against the
-  transaction: after 5 of those (`classification.invalidResponses`) it moves to
-  `status: failed` with a `CLASSIFICATION_FAILED` flag for a human.
-- **Circuit breaker**: after 5 consecutive outage-type failures, stop calling the provider
-  for a 30s cool-off. A transaction claimed during the cool-off is pushed back to when the
-  breaker closes (plus a few seconds of jitter) and the skipped attempt isn't counted,
-  because the provider was never called. Rules keep classifying the whole time. In-memory
-  and per-process.
-- **Getting failed rows back.** `POST /classification/retry-failed` requeues the caller's
-  organisation's failed transactions with their counters reset, and `npm run requeue-failed`
-  does the same for every organisation (one organisation at a time, through the same scoped
-  function, so the tenant guard still applies). When a requeued transaction classifies, the
-  worker resolves its `CLASSIFICATION_FAILED` flag.
-- **Ingestion never depends on any of this.** Import handlers (`transactions.service.ts`)
-  never import the classification module at all, so a provider outage changes nothing about
-  whether `POST /transactions` succeeds, tested directly (`classification.test.ts`,
-  "ingestion does not depend on AI").
+- **5-second timeout** through `AbortController`.
+- **Answers are validated** with Zod. An unknown category or a confidence outside 0 to 1 is
+  an unusable answer, not something to cast.
+- **Two kinds of failure.** Down, slow or rate-limited says nothing about the transaction, so
+  it retries with exponential backoff and jitter (capped at 60s, or the provider's
+  `Retry-After`) for as long as the outage lasts and is never marked failed. An unusable
+  answer counts against the transaction: after 5 it becomes `failed` with a
+  `CLASSIFICATION_FAILED` flag.
+- **Circuit breaker.** After 5 consecutive outage-type failures the worker stops calling the
+  provider for 30s. Rows claimed meanwhile wait until it closes, and the skipped attempt isn't
+  counted. Rules keep working throughout. The breaker is per process.
+- **Getting failed rows back.** `POST /classification/retry-failed` (admin only) or
+  `npm run requeue-failed` resets them to pending. When one then classifies, the worker
+  resolves its flag.
+- **Corrections** add a `human` event with the previous category, the user and an optional
+  note. `classification_events` has a trigger that rejects UPDATE and DELETE, so the history
+  can't be rewritten.
 
-`MOCK_LLM_MODE` (`ok | slow | down | rate_limited | invalid`) plus `MOCK_LLM_FAILURE_RATE`
-let every one of those failure paths be exercised on demand; `setMockLlmMode` /
-`setMockLlmFailureRate` (`mockLlmProvider.ts`) make that possible mid-test-run without a
-restart.
+The mock has modes (`MOCK_LLM_MODE=ok|slow|down|rate_limited|invalid`) so every path above
+can be exercised. In `ok` mode it uses a few keyword hints so recognisable narrations get a
+sensible category at 62 to 94% confidence and vague ones get a low-confidence guess, which is
+what produces `LOW_CONFIDENCE` flags in the demo data. It only picks categories that fit the
+direction.
 
-The mock is meant to behave roughly like a real model, so the demo data looks plausible: a
-few keyword hints ("supplies", "internet", "flight", "subscription"...) give a recognisable
-narration a sensible category at 62-94% confidence, and anything vague ("Misc
-disbursement") gets a guess at 45-69%, which is what produces `LOW_CONFIDENCE` flags. It
-only ever picks categories that fit the direction: a credit can be Revenue, Transfers or
-Other, and a debit is never Revenue.
-
-### Observability
-
-- **Structured logs** (`utils/logger.ts`): one JSON object per line, filtered by
-  `LOG_LEVEL`. Every HTTP request logs `http_request` with its `requestId`, `organisationId`,
-  method, path, status and duration; the same `requestId` is returned in the `x-request-id`
-  header and in every error body, so a support ticket can be traced to its log lines.
-- **Worker events**: `classification_provider_failed`, `circuit_breaker_open` (with when it
-  reopens), `circuit_breaker_closed`, `classification_invalid_response`,
-  `classification_gave_up` and `worker_iteration_failed`. An outage shows up as a run of
-  provider failures followed by `circuit_breaker_open`.
-- **`GET /health`** reports the database connection plus `classificationQueue`: `pending`,
-  `processing`, `failed` and `oldestDueSeconds`, how long the oldest due transaction has
-  been waiting. That last number stays near zero while the worker keeps up and climbs when
-  the provider is down or no worker is running, so it's the one to alert on. The status
-  code only reflects the API and database, because imports keep working while
-  classification is behind.
+**Observability.** Logs are one JSON object per line, filtered by `LOG_LEVEL`. Each request
+logs its `requestId`, organisation, path, status and duration; the same `requestId` is in the
+`x-request-id` header and every error body. The worker logs provider failures, the breaker
+opening and closing, unusable answers and give-ups. `GET /health` reports the database plus
+the queue: `pending`, `processing`, `failed` and `oldestDueSeconds`, how long the oldest due
+row has waited. That last number is the one to alert on.
 
 ## 7. Testing
 
-105 tests, Vitest, `supertest` against the Express app, run against a real MongoDB replica
-set (no mocked database). `server/tests/setup.ts` connects once per run; most fixtures use a
-fresh organisation/user per test so tests never depend on execution order. The one
-exception is `classification.test.ts`, which documents at the top of the file why it drains
-the worker's globally-shared claim queue before each test.
-
-```
-cd server
-docker compose up -d mongo mongo-init    # from the repo root, or use the full stack
-npm test                                   # everything
-npm test -- tests/classification.test.ts   # one file
-npm run typecheck
-```
-
-Coverage maps closely onto what the brief calls out explicitly: money, idempotency and
-concurrency, tenancy, every classification failure mode, audit history, one positive and one
-negative case per detector. The web app was verified by driving a real browser against the
-real stack rather than with a Vitest/RTL suite (see §10).
+109 tests with Vitest and supertest, against a real Postgres. `npm test` drops and recreates a
+`sycamore_test` database, applies the migration SQL and runs every file; it only needs a
+Postgres server (`docker compose up -d postgres` is enough). The tests cover what the brief
+calls out: money parsing and round-tripping, idempotency under 20 concurrent identical
+imports, batch partial failures, tenancy through the API and directly against the database,
+each provider failure mode, the circuit breaker, requeueing, concurrent batch claims, audit
+history, review status, and one positive and one negative case per detector. The web app was
+checked by hand in a browser against the full stack.
 
 ## 8. Assumptions and trade-offs
 
-- **NGN only.** `currency` must be exactly `"NGN"`; anything else is a validation error.
-  Multi-currency would need an FX layer and a currency-aware `largePaymentMultiple`, out of
-  scope here.
-- **Roles are only enforced where the blast radius is organisation-wide.** Requeueing every
-  failed classification (`POST /classification/retry-failed`) needs `admin` and returns
-  `403` for a `member` (`middleware/requireRole.middleware.ts`). Importing, correcting a
-  category and resolving a flag are open to any member, since that's the day-to-day finance
-  work and every correction is recorded with who made it. A real deployment would likely
-  want finer permissions (for example, members can correct but only admins can resolve an
-  `UNUSUALLY_LARGE` flag).
-- **Login rate limiting and the classification circuit breaker are in-memory,
-  per-process.** Correct for one API/worker instance; a horizontally scaled deployment would
-  need both moved to a shared store (Redis), as noted at each definition site.
-- **Keyset pagination only, no total counts.** `GET /transactions` and `GET /review/flags`
-  never expose "page 3 of 40" because that would need a `count()` that gets slower as the
-  collection grows; "Load more" / cursor-forward is the trade for staying fast at scale.
-- **The web UI doesn't expose every filter the API supports.** `minAmount`/`maxAmount` work
-  against the API (tested) but aren't wired into the Transactions page's filter bar, to keep
-  that bar usable rather than exhaustive.
-- **Seed volume** is ~400 transactions total (193 + 202) across two organisations over three
-  months: comfortably "a few hundred" in aggregate, on the lower end of that phrase read
-  per-organisation. Generating more would be a matter of widening the weekly loops in
-  `server/src/seed/generateTransactions.ts`, not a design change.
-- **No admin/invite flow.** Organisations, users, and accounts only exist via the seed
-  script or direct database access; there's no `POST /organisations` or `POST /users`. Out
-  of scope for what the brief asks the API to do.
+- **NGN only**, enforced by validation and a CHECK constraint.
+- **Roles.** Only requeueing (organisation-wide) is admin-only. Importing, correcting and
+  resolving are everyday finance work and open to members; every correction records who
+  made it.
+- **Login rate limiting and the circuit breaker are in memory**, so they're per process.
+  Several instances would need them in Redis.
+- **Keyset pagination without totals.** No "page 3 of 40", because a total count gets slower as
+  the table grows.
+- **Search** is a case-insensitive substring match on narration, merchant and reference,
+  backed by trigram indexes. Fine at this size; a search engine would be the next step.
+- **No sign-up or invite flow.** Organisations, users and accounts come from the seed script.
+- **Seed data** is about 400 transactions across two organisations over three months,
+  including recurring rent and payroll, a duplicate pair, an unusually large payment and
+  some vague narrations.
 
 ## 9. Design scenarios
 
-**AI reliability: a six-hour outage with hundreds of thousands of transactions arriving.**
-Nothing about ingestion changes: imports keep succeeding and queue up as `pending`, because
-the import path never calls the classification provider. Rules keep classifying whatever
-they match for the whole six hours. For the rest, the worker tries the provider, and after
-five consecutive failures the circuit breaker stops calling it for 30s at a time, so retries
-don't become extra load on (or billed cost against) a service that's down. Transactions
-claimed while the breaker is open are pushed back to when it closes, and those skipped calls
-don't count as attempts. An outage never marks a transaction as failed: only unusable
-answers do, so six hours of downtime doesn't turn into hundreds of thousands of
-`CLASSIFICATION_FAILED` flags for the finance team. Once the provider recovers, the backlog
-drains oldest-due-first with no manual step. If something did end up `failed` (for example
-the provider came back returning bad answers for a while),
-`POST /classification/retry-failed` or `npm run requeue-failed` puts it back in the queue.
-At "hundreds of thousands" scale a single worker process would take a
-while to catch up, so the lever to pull is running more worker replicas (safe already, since
-the claim is one atomic `findOneAndUpdate`) and watching `pendingClassificationCount` on the
-dashboard as the signal for whether to add more.
+**The classification provider is down for six hours while hundreds of thousands of
+transactions arrive.** Imports keep succeeding, because they never call the provider; rows
+queue as `pending`. Rules keep classifying whatever they match. For the rest, the circuit
+breaker stops calls after five failures and retries every 30s, so a dead provider isn't
+hammered or billed. Outage failures never mark a row as failed, so the finance team doesn't
+come back to a wall of `CLASSIFICATION_FAILED` flags. `oldestDueSeconds` in `/health` climbs
+and is what should page someone. When the provider recovers, the backlog drains oldest first
+with no manual step; to drain faster, run more workers, which is safe because claims use
+`SKIP LOCKED`. Anything that did fail (the provider came back answering badly, say) goes back
+with `requeue-failed`.
 
-**AI cost at millions of transactions a day, without hurting accuracy.** Rules absorbing as
-much deterministic volume as possible is already the design and is the single biggest cost
-lever available, since every rule hit is a model call avoided. Beyond that: cache classification
-results by a normalised `(narration, merchant)` key across the whole platform, not per
-organisation, since unrelated businesses share the same bank-fee boilerplate and the same
-handful of cloud vendors; batch several transactions into one LLM call instead of one call
-per row; route to a cheap/small model first and escalate to a stronger one only when its own
-confidence is low; and feed back corrections (`classification_events` with `source: human`)
-into new rules on a regular cadence, so the set of narrations that actually need the model
-keeps shrinking over time instead of staying fixed.
+**Keeping AI cost down at millions of transactions a day.** Rules first, since every rule hit
+is a model call saved. Then cache answers by a normalised narration and merchant across all
+organisations, because businesses share the same bank-fee wording and the same vendors.
+Batch many transactions into one model call. Use a small, cheap model first and only send
+low-confidence answers to a stronger one. And turn human corrections (`classification_events`
+with source `human`) into new rules regularly, so the share of traffic that needs a model keeps
+shrinking.
 
-**Scaling from 100,000 to 10 million transactions a day.** The current design (single Mongo
-replica set, one worker polling, in-memory rate limiter and breaker) is right-sized for the
-lower end, not the upper one. At 10M/day I'd: shard `transactions` by `organisationId` (the
-natural tenant boundary, and already the leading field of every index); replace poll-and-
-claim with a real queue (SQS/Kafka) so there's back-pressure and consumer groups instead of
-one claim loop competing with itself; move the rate limiter and circuit breaker to Redis so
-they're correct across replicas instead of per-process; add a denormalised read model for
-the dashboard so heavy aggregation stops competing with the hot write path; and introduce
-time-based partitioning/archiving so the working set for recent-data queries doesn't keep
-growing forever.
+**Scaling from 100,000 to 10 million transactions a day.** That's roughly 115 a second on
+average, more at peaks. In order: partition `transactions` by month so recent queries and
+indexes stay small and old months can be archived; run the API and workers as several
+instances, with the rate limiter and breaker moved to Redis; add a read replica for the
+dashboard and listing, and pre-aggregate daily totals per organisation so the dashboard stops
+summing raw rows; move ingestion behind a queue (SQS or Kafka) so bursts are absorbed and
+workers scale on queue depth; keep median-style detector inputs as running per-account
+statistics instead of computing them per transaction. The very largest tenants could later get
+their own database.
 
-**Product trust: a customer says AI categorisation is making their finance team distrust
-the dashboard.** First step is data, not reassurance: pull `GET /transactions/:id` for the
-specific transactions they're pointing at and look at `classificationHistory`: which
-provider or rule produced the category, and at what confidence. If those transactions are
-sitting on an unresolved `LOW_CONFIDENCE` flag, the system already knew it wasn't sure; the
-complaint may be as much about the review workflow not being used as about accuracy itself.
-If a specific vendor or narration pattern is consistently wrong, that's a same-day fix: add
-a rule for it, which takes effect with zero latency and no model change, exactly because
-rules exist for this. And check whether their own corrections are flowing anywhere: the
-audit trail (`classification_events`) is the raw material for exactly this feedback loop,
-and if it's just sitting there un-mined, that's the real process gap to close.
+**A customer says wrong categories have made their finance team distrust the dashboard.**
+Start with the transactions they're pointing at: `GET /transactions/:id` shows which rule or
+model produced each category and at what confidence. If they were already flagged
+`LOW_CONFIDENCE` and never reviewed, part of the fix is the review workflow (make the queue
+visible, show confidence on the dashboard). If one vendor or narration pattern is
+consistently wrong, add a rule the same day. Measure the correction rate by source to see
+whether rules or the model are the problem, and feed their corrections back as rules. Until
+trust is back, show how much of each total is unreviewed AI output, so the numbers are honest
+about their certainty.
 
-## 10. Unfinished work and possible next steps
+## 10. Unfinished work and next steps
 
-- Hand-maintained OpenAPI spec (`docs/openapi.json`, `GET /docs`) rather than generated from
-  the Zod schemas. `@asteasolutions/zod-to-openapi` would close that gap but means every
-  validation schema registering itself with the spec instead of staying a plain `.parse()`
-  call in the controller.
-- No automated UI test suite; the web app was verified against the real stack in a browser
-  rather than with Playwright/RTL.
-- `minAmount`/`maxAmount` filters exist in the API but not the Transactions page's UI.
-- Only one admin-gated endpoint, no admin/invite endpoints, no CI pipeline config.
-- Login rate limiting and the classification circuit breaker are per-process; both are
-  clearly marked at their definition site as the first things to move to a shared store in a
-  multi-instance deployment.
-- The large-payment detector loads the account's last 90 days of debits into memory to
-  find the median, once per transaction. Fine at prototype volume; at scale I'd keep a
-  running per-account median (or a percentile sketch) updated on insert, or compute it with
-  an aggregation over a pre-bucketed daily summary instead.
-- Search by reference is an exact match: a single-word query is first looked up as an
-  `externalReference` (Mongo's text index splits `TRF/0012` into pieces), and falls back to
-  text search if no transaction has that reference. Partial reference search would need a
-  prefix index or a search engine.
-- No metrics endpoint or tracing. Logs are structured and the health check exposes the
-  queue, which covers the basics; Prometheus counters for classifications by source,
-  provider latency and breaker state would be next.
+- The OpenAPI spec (`docs/openapi.json`, served at `GET /docs`) is written by hand rather
+  than generated from the Zod schemas.
+- No automated UI tests and no CI configuration.
+- `minAmount` and `maxAmount` filters exist in the API but not in the web app's filter bar.
+- No metrics endpoint or tracing yet; Prometheus counters for classifications by source,
+  provider latency and breaker state would come next.
+- Only one admin-only endpoint; a real deployment would want finer permissions.
+- A real provider adapter (for example an OpenAI model with a JSON schema response) behind
+  the existing interface.
