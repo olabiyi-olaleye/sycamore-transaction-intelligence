@@ -121,6 +121,20 @@ describe('GET /api/v1/transactions?q= with a reference', () => {
     expect(response.status).toBe(200);
     expect(response.body.transactions.map((t: { externalReference: string }) => t.externalReference)).toEqual(['TRF/0012']);
   });
+
+  it('matches a reference with no digits, and still text-searches a word that is not a reference', async () => {
+    const { app, account, authHeader } = await setupOrgWithToken();
+    const orgId = account.organisationId.toString();
+    const accountId = account._id.toString();
+    await createTransaction(orgId, { accountId, amountKobo: 1000n, direction: 'debit', date: day(12), externalReference: 'ops-dup-a', narration: 'Supplier payment' });
+    await createTransaction(orgId, { accountId, amountKobo: 2000n, direction: 'debit', date: day(13), externalReference: 'ops-x', narration: 'Generator diesel' });
+
+    const byReference = await request(app).get('/api/v1/transactions?q=ops-dup-a').set('authorization', authHeader);
+    expect(byReference.body.transactions.map((t: { externalReference: string }) => t.externalReference)).toEqual(['ops-dup-a']);
+
+    const byText = await request(app).get('/api/v1/transactions?q=diesel').set('authorization', authHeader);
+    expect(byText.body.transactions.map((t: { externalReference: string }) => t.externalReference)).toEqual(['ops-x']);
+  });
 });
 
 describe('GET /api/v1/transactions/:id', () => {

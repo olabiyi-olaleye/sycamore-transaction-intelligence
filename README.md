@@ -366,7 +366,7 @@ Other, and a debit is never Revenue.
 
 ## 7. Testing
 
-103 tests, Vitest, `supertest` against the Express app, run against a real MongoDB replica
+104 tests, Vitest, `supertest` against the Express app, run against a real MongoDB replica
 set (no mocked database). `server/tests/setup.ts` connects once per run; most fixtures use a
 fresh organisation/user per test so tests never depend on execution order. The one
 exception is `classification.test.ts`, which documents at the top of the file why it drains
@@ -481,9 +481,10 @@ and if it's just sitting there un-mined, that's the real process gap to close.
   find the median, once per transaction. Fine at prototype volume; at scale I'd keep a
   running per-account median (or a percentile sketch) updated on insert, or compute it with
   an aggregation over a pre-bucketed daily summary instead.
-- Search by reference is an exact match: a single token with a digit in it is treated as a
-  reference rather than text, because Mongo's text index splits `TRF/0012` into pieces.
-  Partial reference search would need a prefix index or a search engine.
+- Search by reference is an exact match: a single-word query is first looked up as an
+  `externalReference` (Mongo's text index splits `TRF/0012` into pieces), and falls back to
+  text search if no transaction has that reference. Partial reference search would need a
+  prefix index or a search engine.
 - No metrics endpoint or tracing. Logs are structured and the health check exposes the
   queue, which covers the basics; Prometheus counters for classifications by source,
   provider latency and breaker state would be next.

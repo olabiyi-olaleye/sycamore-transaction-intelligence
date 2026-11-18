@@ -253,8 +253,10 @@ export interface TransactionListFilters {
   limit: number;
 }
 
-export function looksLikeReference(q: string): boolean {
-  return /^\S+$/.test(q) && /\d/.test(q);
+async function isExistingReference(organisationId: string, q: string): Promise<boolean> {
+  if (!/^\S+$/.test(q)) return false;
+  const match = await TransactionModel.exists({ organisationId, externalReference: q });
+  return Boolean(match);
 }
 
 export async function listTransactions(
@@ -281,19 +283,19 @@ export async function listTransactions(
     filter.amountKobo = amountRange;
   }
 
-  // A single token containing a digit ("GTB-88213", "TRF/0012") is almost
-  // always a reference someone pasted in, and the text index splits those
-  // into pieces, so match it exactly instead. Anything else is a text search.
+  // Mongo's text index splits a reference like "GTB-88213" or "lff-operating-dup-a"
+  // into pieces, so a single-word query is first tried as an exact
+  // externalReference (an indexed lookup). If no transaction has that
+  // reference, it falls back to the normal text search over narration and
+  // merchant ("Dangote", "rent").
   if (filters.q) {
-    if (looksLikeReference(filters.q)) {
+    if (await isExistingReference(organisationId, filters.q)) {
       filter.externalReference = filters.q;
     } else {
       filter.$text = { $search: filters.q };
     }
   }
 
-  // Strictly before the last row of the previous page, in the same
-  // (date desc, _id desc) order the results are sorted by.
   if (filters.cursor) {
     filter.$or = [
       { date: { $lt: filters.cursor.date } },
