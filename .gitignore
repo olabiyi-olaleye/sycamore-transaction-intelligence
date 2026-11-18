@@ -7,3 +7,4 @@ coverage/
 notes/
 .DS_Store
 web/dist/
+server/src/generated/

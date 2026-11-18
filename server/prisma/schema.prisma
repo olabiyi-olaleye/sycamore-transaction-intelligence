@@ -1,0 +1,211 @@
+// The tables, columns, keys and indexes Prisma knows about. A few rules it
+// can't express live in the migration SQL itself: CHECK constraints on
+// amounts and currency, the trigger that keeps classification_events
+// append-only, and the row-level security policies. See
+// migrations/*/migration.sql.
+
+generator client {
+  provider               = "prisma-client"
+  output                 = "../src/generated/prisma"
+  moduleFormat           = "esm"
+  importFileExtension    = "js"
+  runtime                = "nodejs"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum UserRole {
+  admin
+  member
+}
+
+enum Direction {
+  credit
+  debit
+}
+
+enum Category {
+  REVENUE
+  PAYROLL
+  SOFTWARE
+  MARKETING
+  TRAVEL
+  UTILITIES
+  RENT
+  TAX
+  TRANSFERS
+  BANKING_FEES
+  OTHER
+}
+
+enum ClassificationStatus {
+  pending
+  processing
+  classified
+  failed
+}
+
+enum ClassificationSource {
+  rule
+  ai
+  human
+}
+
+enum ReviewStatus {
+  none
+  open
+  resolved
+}
+
+enum ReviewFlagType {
+  POSSIBLE_DUPLICATE
+  UNUSUALLY_LARGE
+  LOW_CONFIDENCE
+  CLASSIFICATION_FAILED
+}
+
+enum ReviewFlagStatus {
+  open
+  resolved
+}
+
+model Organisation {
+  id                   String   @id @default(uuid()) @db.Uuid
+  name                 String   @unique
+  largePaymentMultiple Int      @default(5) @map("large_payment_multiple")
+  createdAt            DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt            DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  users        User[]
+  accounts     Account[]
+  transactions Transaction[]
+
+  // Row-level security applies here too: an organisation can only read its
+  // own row.
+  @@map("organisations")
+}
+
+model User {
+  id             String       @id @default(uuid()) @db.Uuid
+  organisationId String       @map("organisation_id") @db.Uuid
+  email          String       @unique
+  passwordHash   String       @map("password_hash")
+  name           String
+  role           UserRole
+  createdAt      DateTime     @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt      DateTime     @updatedAt @map("updated_at") @db.Timestamptz(3)
+  organisation   Organisation @relation(fields: [organisationId], references: [id])
+
+  @@index([organisationId])
+  @@map("users")
+}
+
+model Account {
+  id                 String       @id @default(uuid()) @db.Uuid
+  organisationId     String       @map("organisation_id") @db.Uuid
+  name               String
+  bankName           String       @map("bank_name")
+  accountNumberLast4 String       @map("account_number_last4") @db.Char(4)
+  currency           String       @default("NGN") @db.Char(3)
+  createdAt          DateTime     @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt          DateTime     @updatedAt @map("updated_at") @db.Timestamptz(3)
+  organisation       Organisation @relation(fields: [organisationId], references: [id])
+  transactions       Transaction[]
+
+  // Lets transactions reference (organisation_id, account_id) together, so a
+  // transaction can never point at another organisation's account.
+  @@unique([organisationId, id])
+  @@unique([organisationId, accountNumberLast4])
+  @@map("accounts")
+}
+
+model Transaction {
+  id                    String                @id @default(uuid()) @db.Uuid
+  organisationId        String                @map("organisation_id") @db.Uuid
+  accountId             String                @map("account_id") @db.Uuid
+  externalReference     String                @map("external_reference")
+  amountKobo            BigInt                @map("amount_kobo")
+  direction             Direction
+  currency              String                @default("NGN") @db.Char(3)
+  narration             String
+  merchant              String?
+  date                  DateTime              @db.Timestamptz(3)
+  category              Category?
+  categorySource        ClassificationSource? @map("category_source")
+  categoryConfidence    Float?                @map("category_confidence")
+  categoryEventId       String?               @map("category_event_id") @db.Uuid
+  classificationStatus  ClassificationStatus  @default(pending) @map("classification_status")
+  attempts              Int                   @default(0)
+  invalidResponses      Int                   @default(0) @map("invalid_responses")
+  nextAttemptAt         DateTime              @default(now()) @map("next_attempt_at") @db.Timestamptz(3)
+  lockedUntil           DateTime?             @map("locked_until") @db.Timestamptz(3)
+  lastError             String?               @map("last_error")
+  reviewStatus          ReviewStatus          @default(none) @map("review_status")
+  createdAt             DateTime              @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt             DateTime              @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  organisation         Organisation          @relation(fields: [organisationId], references: [id])
+  account              Account               @relation(fields: [organisationId, accountId], references: [organisationId, id])
+  classificationEvents ClassificationEvent[]
+  reviewFlags          ReviewFlag[]
+
+  // Decides a duplicate import: the insert is attempted and this constraint
+  // says no, rather than the app checking first.
+  @@unique([organisationId, accountId, externalReference])
+  @@unique([organisationId, id])
+  @@index([organisationId, date(sort: Desc), id(sort: Desc)])
+  @@index([organisationId, accountId, date(sort: Desc)])
+  @@index([organisationId, category, date])
+  @@index([organisationId, reviewStatus, date])
+  @@index([organisationId, accountId, direction, amountKobo, date], map: "transactions_org_account_direction_amount_date_idx")
+  @@index([classificationStatus, nextAttemptAt])
+  @@index([narration(ops: raw("gin_trgm_ops"))], type: Gin)
+  @@index([merchant(ops: raw("gin_trgm_ops"))], type: Gin)
+  @@index([externalReference(ops: raw("gin_trgm_ops"))], type: Gin)
+  @@map("transactions")
+}
+
+// Append-only. A trigger in the migration rejects UPDATE and DELETE, so a
+// correction adds a row here and never edits an old one.
+model ClassificationEvent {
+  id               String               @id @default(uuid()) @db.Uuid
+  organisationId   String               @map("organisation_id") @db.Uuid
+  transactionId    String               @map("transaction_id") @db.Uuid
+  source           ClassificationSource
+  provider         String
+  category         Category
+  previousCategory Category?            @map("previous_category")
+  confidence       Float?
+  reason           String
+  actorUserId      String?              @map("actor_user_id") @db.Uuid
+  note             String?
+  createdAt        DateTime             @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  transaction Transaction @relation(fields: [organisationId, transactionId], references: [organisationId, id])
+
+  @@index([organisationId, transactionId, createdAt], map: "classification_events_org_transaction_created_idx")
+  @@map("classification_events")
+}
+
+model ReviewFlag {
+  id             String           @id @default(uuid()) @db.Uuid
+  organisationId String           @map("organisation_id") @db.Uuid
+  transactionId  String           @map("transaction_id") @db.Uuid
+  type           ReviewFlagType
+  reason         String
+  details        Json?
+  status         ReviewFlagStatus @default(open)
+  resolvedBy     String?          @map("resolved_by") @db.Uuid
+  resolvedAt     DateTime?        @map("resolved_at") @db.Timestamptz(3)
+  createdAt      DateTime         @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt      DateTime         @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  transaction Transaction @relation(fields: [organisationId, transactionId], references: [organisationId, id])
+
+  // One flag per (transaction, type): a detector that runs twice raises it once.
+  @@unique([transactionId, type])
+  @@index([organisationId, status, createdAt(sort: Desc)])
+  @@map("review_flags")
+}
