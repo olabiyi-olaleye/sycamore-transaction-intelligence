@@ -10,11 +10,11 @@ describe('worker claim loop', () => {
     await runClaimLoop(controller.signal, {
       pollIntervalMs: 1,
       onError: (error) => errors.push(error),
-      processOne: async () => {
+      processBatch: async () => {
         calls += 1;
         if (calls === 1) throw new Error('simulated database blip');
         if (calls === 3) controller.abort();
-        return 'claimed';
+        return 5;
       },
     });
 

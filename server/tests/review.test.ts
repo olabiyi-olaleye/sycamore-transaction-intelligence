@@ -1,23 +1,21 @@
 import { describe, expect, it } from 'vitest';
 import request from 'supertest';
-import { ClassificationEventModel } from '../src/models/classificationEvent.model.js';
-import { ReviewFlagModel, createFlag } from '../src/models/reviewFlag.model.js';
-import { TransactionModel } from '../src/models/transaction.model.js';
+import { createFlag } from '../src/repositories/reviewFlags.repository.js';
 import { buildApp } from '../src/app.js';
 import { detectPossibleDuplicate, detectUnusuallyLarge } from '../src/services/review/detectors.js';
-import { createAccount, createOrganisation, createTransaction, createUser, uniqueEmail } from './fixtures.js';
+import { createAccount, createOrganisation, createTransaction, createUser, db, findTransaction, uniqueEmail } from './fixtures.js';
 
 async function setupOrgWithToken() {
   const password = 'review-test-password';
   const org = await createOrganisation('Review Test Co');
   const email = uniqueEmail('review');
-  const user = await createUser(org._id.toString(), { email, password });
-  const account = await createAccount(org._id.toString());
+  const user = await createUser(org.id, { email, password });
+  const account = await createAccount(org.id);
 
   const app = buildApp();
   const loginResponse = await request(app).post('/api/v1/auth/login').send({ email, password });
   const { token } = loginResponse.body;
-  return { app, orgId: org._id.toString(), accountId: account._id.toString(), userId: user._id.toString(), authHeader: `Bearer ${token}` };
+  return { app, orgId: org.id, accountId: account.id, userId: user.id, authHeader: `Bearer ${token}` };
 }
 
 const day = (n: number) => new Date(`2024-02-${String(n).padStart(2, '0')}T12:00:00.000Z`);
@@ -30,14 +28,14 @@ describe('POSSIBLE_DUPLICATE detector', () => {
 
     await detectPossibleDuplicate(orgId, second);
 
-    const flag = await ReviewFlagModel.findOne({ organisationId: orgId, transactionId: second._id }).lean();
+    const flag = await db().reviewFlag.findFirst({ where: { organisationId: orgId, transactionId: second.id } });
     expect(flag?.type).toBe('POSSIBLE_DUPLICATE');
     expect(flag?.reason).toContain('250,000.00');
     expect(flag?.reason).toContain('GTB-88213');
     expect(flag?.reason).toMatch(/hours? earlier/);
 
     // The earlier one is not itself flagged as a duplicate of something later.
-    const firstFlag = await ReviewFlagModel.findOne({ organisationId: orgId, transactionId: first._id }).lean();
+    const firstFlag = await db().reviewFlag.findFirst({ where: { organisationId: orgId, transactionId: first.id } });
     expect(firstFlag).toBeNull();
   });
 
@@ -48,7 +46,7 @@ describe('POSSIBLE_DUPLICATE detector', () => {
 
     await detectPossibleDuplicate(orgId, second);
 
-    const flag = await ReviewFlagModel.findOne({ organisationId: orgId, transactionId: second._id }).lean();
+    const flag = await db().reviewFlag.findFirst({ where: { organisationId: orgId, transactionId: second.id } });
     expect(flag?.reason).toContain('on the same date');
     expect(flag?.reason).not.toMatch(/hour/);
   });
@@ -60,7 +58,7 @@ describe('POSSIBLE_DUPLICATE detector', () => {
 
     await detectPossibleDuplicate(orgId, second);
 
-    const flag = await ReviewFlagModel.findOne({ organisationId: orgId, transactionId: second._id }).lean();
+    const flag = await db().reviewFlag.findFirst({ where: { organisationId: orgId, transactionId: second.id } });
     expect(flag).toBeNull();
   });
 
@@ -71,7 +69,7 @@ describe('POSSIBLE_DUPLICATE detector', () => {
 
     await detectPossibleDuplicate(orgId, second);
 
-    const flag = await ReviewFlagModel.findOne({ organisationId: orgId, transactionId: second._id }).lean();
+    const flag = await db().reviewFlag.findFirst({ where: { organisationId: orgId, transactionId: second.id } });
     expect(flag).toBeNull();
   });
 });
@@ -86,7 +84,7 @@ describe('UNUSUALLY_LARGE detector', () => {
 
     await detectUnusuallyLarge(orgId, large);
 
-    const flag = await ReviewFlagModel.findOne({ organisationId: orgId, transactionId: large._id }).lean();
+    const flag = await db().reviewFlag.findFirst({ where: { organisationId: orgId, transactionId: large.id } });
     expect(flag?.type).toBe('UNUSUALLY_LARGE');
     expect(flag?.reason).toBe("₦4,500,000.00 is 9x this account's typical debit of ₦500,000.00.");
   });
@@ -103,7 +101,7 @@ describe('UNUSUALLY_LARGE detector', () => {
 
     await detectUnusuallyLarge(orgId, thisMonth);
 
-    const flag = await ReviewFlagModel.findOne({ organisationId: orgId, transactionId: thisMonth._id }).lean();
+    const flag = await db().reviewFlag.findFirst({ where: { organisationId: orgId, transactionId: thisMonth.id } });
     expect(flag).toBeNull();
   });
 
@@ -116,7 +114,7 @@ describe('UNUSUALLY_LARGE detector', () => {
 
     await detectUnusuallyLarge(orgId, large);
 
-    const flag = await ReviewFlagModel.findOne({ organisationId: orgId, transactionId: large._id }).lean();
+    const flag = await db().reviewFlag.findFirst({ where: { organisationId: orgId, transactionId: large.id } });
     expect(flag).toBeNull();
   });
 
@@ -129,7 +127,7 @@ describe('UNUSUALLY_LARGE detector', () => {
 
     await detectUnusuallyLarge(orgId, notLarge);
 
-    const flag = await ReviewFlagModel.findOne({ organisationId: orgId, transactionId: notLarge._id }).lean();
+    const flag = await db().reviewFlag.findFirst({ where: { organisationId: orgId, transactionId: notLarge.id } });
     expect(flag).toBeNull();
   });
 
@@ -142,7 +140,7 @@ describe('UNUSUALLY_LARGE detector', () => {
 
     await detectUnusuallyLarge(orgId, credit);
 
-    const flag = await ReviewFlagModel.findOne({ organisationId: orgId, transactionId: credit._id }).lean();
+    const flag = await db().reviewFlag.findFirst({ where: { organisationId: orgId, transactionId: credit.id } });
     expect(flag).toBeNull();
   });
 });
@@ -152,13 +150,13 @@ describe('GET /api/v1/review/flags', () => {
     const { app, orgId, accountId, authHeader } = await setupOrgWithToken();
     const txA = await createTransaction(orgId, { accountId, amountKobo: 1000n, direction: 'debit', date: day(1) });
     const txB = await createTransaction(orgId, { accountId, amountKobo: 1000n, direction: 'debit', date: day(2) });
-    await ReviewFlagModel.create({ organisationId: orgId, transactionId: txA._id, type: 'LOW_CONFIDENCE', reason: 'r1' });
-    await ReviewFlagModel.create({ organisationId: orgId, transactionId: txB._id, type: 'CLASSIFICATION_FAILED', reason: 'r2', status: 'resolved', resolvedAt: new Date() });
+    await db().reviewFlag.create({ data: { organisationId: orgId, transactionId: txA.id, type: 'LOW_CONFIDENCE', reason: 'r1' } });
+    await db().reviewFlag.create({ data: { organisationId: orgId, transactionId: txB.id, type: 'CLASSIFICATION_FAILED', reason: 'r2', status: 'resolved', resolvedAt: new Date() } });
 
     const otherOrg = await createOrganisation('Other Review Org');
-    const otherAccount = await createAccount(otherOrg._id.toString());
-    const otherTx = await createTransaction(otherOrg._id.toString(), { accountId: otherAccount._id.toString(), amountKobo: 1000n, direction: 'debit', date: day(1) });
-    await ReviewFlagModel.create({ organisationId: otherOrg._id, transactionId: otherTx._id, type: 'LOW_CONFIDENCE', reason: 'not mine' });
+    const otherAccount = await createAccount(otherOrg.id);
+    const otherTx = await createTransaction(otherOrg.id, { accountId: otherAccount.id, amountKobo: 1000n, direction: 'debit', date: day(1) });
+    await db().reviewFlag.create({ data: { organisationId: otherOrg.id, transactionId: otherTx.id, type: 'LOW_CONFIDENCE', reason: 'not mine' } });
 
     const all = await request(app).get('/api/v1/review/flags').set('authorization', authHeader);
     expect(all.body.flags).toHaveLength(2);
@@ -173,9 +171,9 @@ describe('POST /api/v1/review/flags/:id/resolve', () => {
   it('resolves an open flag', async () => {
     const { app, orgId, accountId, authHeader } = await setupOrgWithToken();
     const tx = await createTransaction(orgId, { accountId, amountKobo: 1000n, direction: 'debit', date: day(1) });
-    const flag = await ReviewFlagModel.create({ organisationId: orgId, transactionId: tx._id, type: 'LOW_CONFIDENCE', reason: 'r' });
+    const flag = await db().reviewFlag.create({ data: { organisationId: orgId, transactionId: tx.id, type: 'LOW_CONFIDENCE', reason: 'r' } });
 
-    const response = await request(app).post(`/api/v1/review/flags/${flag._id}/resolve`).set('authorization', authHeader);
+    const response = await request(app).post(`/api/v1/review/flags/${flag.id}/resolve`).set('authorization', authHeader);
 
     expect(response.status).toBe(200);
     expect(response.body.status).toBe('resolved');
@@ -184,20 +182,20 @@ describe('POST /api/v1/review/flags/:id/resolve', () => {
   it('returns 409 for a flag that is already resolved', async () => {
     const { app, orgId, accountId, authHeader } = await setupOrgWithToken();
     const tx = await createTransaction(orgId, { accountId, amountKobo: 1000n, direction: 'debit', date: day(1) });
-    const flag = await ReviewFlagModel.create({ organisationId: orgId, transactionId: tx._id, type: 'LOW_CONFIDENCE', reason: 'r', status: 'resolved', resolvedAt: new Date() });
+    const flag = await db().reviewFlag.create({ data: { organisationId: orgId, transactionId: tx.id, type: 'LOW_CONFIDENCE', reason: 'r', status: 'resolved', resolvedAt: new Date() } });
 
-    const response = await request(app).post(`/api/v1/review/flags/${flag._id}/resolve`).set('authorization', authHeader);
+    const response = await request(app).post(`/api/v1/review/flags/${flag.id}/resolve`).set('authorization', authHeader);
     expect(response.status).toBe(409);
   });
 
   it("returns 404 for another organisation's flag", async () => {
     const { app, authHeader } = await setupOrgWithToken();
     const otherOrg = await createOrganisation('Resolve Other Org');
-    const otherAccount = await createAccount(otherOrg._id.toString());
-    const otherTx = await createTransaction(otherOrg._id.toString(), { accountId: otherAccount._id.toString(), amountKobo: 1000n, direction: 'debit', date: day(1) });
-    const flag = await ReviewFlagModel.create({ organisationId: otherOrg._id, transactionId: otherTx._id, type: 'LOW_CONFIDENCE', reason: 'r' });
+    const otherAccount = await createAccount(otherOrg.id);
+    const otherTx = await createTransaction(otherOrg.id, { accountId: otherAccount.id, amountKobo: 1000n, direction: 'debit', date: day(1) });
+    const flag = await db().reviewFlag.create({ data: { organisationId: otherOrg.id, transactionId: otherTx.id, type: 'LOW_CONFIDENCE', reason: 'r' } });
 
-    const response = await request(app).post(`/api/v1/review/flags/${flag._id}/resolve`).set('authorization', authHeader);
+    const response = await request(app).post(`/api/v1/review/flags/${flag.id}/resolve`).set('authorization', authHeader);
     expect(response.status).toBe(404);
   });
 });
@@ -213,20 +211,22 @@ describe('POST /api/v1/transactions/:id/corrections', () => {
       category: { value: 'MARKETING', source: 'ai', confidence: 0.42 },
       classificationStatus: 'classified',
     });
-    await ClassificationEventModel.create({
-      organisationId: orgId,
-      transactionId: tx._id,
-      source: 'ai',
-      provider: 'mock-llm',
-      category: 'MARKETING',
-      previousCategory: null,
-      confidence: 0.42,
-      reason: 'Mock LLM inferred MARKETING',
+    await db().classificationEvent.create({
+      data: {
+        organisationId: orgId,
+        transactionId: tx.id,
+        source: 'ai',
+        provider: 'mock-llm',
+        category: 'MARKETING',
+        previousCategory: null,
+        confidence: 0.42,
+        reason: 'Mock LLM inferred MARKETING',
+      },
     });
-    await ReviewFlagModel.create({ organisationId: orgId, transactionId: tx._id, type: 'LOW_CONFIDENCE', reason: 'Categorised as Marketing with 42% confidence.' });
+    await db().reviewFlag.create({ data: { organisationId: orgId, transactionId: tx.id, type: 'LOW_CONFIDENCE', reason: 'Categorised as Marketing with 42% confidence.' } });
 
     const response = await request(app)
-      .post(`/api/v1/transactions/${tx._id}/corrections`)
+      .post(`/api/v1/transactions/${tx.id}/corrections`)
       .set('authorization', authHeader)
       .send({ category: 'SOFTWARE', note: 'This is clearly a software subscription' });
 
@@ -239,11 +239,11 @@ describe('POST /api/v1/transactions/:id/corrections', () => {
     expect(history[1]).toMatchObject({ source: 'human', category: 'SOFTWARE', previousCategory: 'MARKETING', note: 'This is clearly a software subscription' });
 
     // The original AI event is untouched, not edited.
-    const originalEvent = await ClassificationEventModel.findOne({ organisationId: orgId, transactionId: tx._id, source: 'ai' }).lean();
+    const originalEvent = await db().classificationEvent.findFirst({ where: { organisationId: orgId, transactionId: tx.id, source: 'ai' } });
     expect(originalEvent?.category).toBe('MARKETING');
 
     // The LOW_CONFIDENCE flag is resolved by the correction.
-    const flag = await ReviewFlagModel.findOne({ organisationId: orgId, transactionId: tx._id, type: 'LOW_CONFIDENCE' }).lean();
+    const flag = await db().reviewFlag.findFirst({ where: { organisationId: orgId, transactionId: tx.id, type: 'LOW_CONFIDENCE' } });
     expect(flag?.status).toBe('resolved');
 
     expect(response.body.flags.find((f: { type: string }) => f.type === 'LOW_CONFIDENCE').status).toBe('resolved');
@@ -260,22 +260,22 @@ describe('POST /api/v1/transactions/:id/corrections', () => {
     });
 
     await request(app)
-      .post(`/api/v1/transactions/${tx._id}/corrections`)
+      .post(`/api/v1/transactions/${tx.id}/corrections`)
       .set('authorization', authHeader)
       .send({ category: 'OTHER' });
 
-    const reread = await TransactionModel.findOne({ organisationId: orgId, _id: tx._id }).lean();
-    expect(reread?.classification.status).toBe('classified');
+    const reread = await findTransaction(tx.id);
+    expect(reread?.classificationStatus).toBe('classified');
   });
 
   it("returns 404 for another organisation's transaction", async () => {
     const { app, authHeader } = await setupOrgWithToken();
     const otherOrg = await createOrganisation('Correction Other Org');
-    const otherAccount = await createAccount(otherOrg._id.toString());
-    const otherTx = await createTransaction(otherOrg._id.toString(), { accountId: otherAccount._id.toString(), amountKobo: 1000n, direction: 'debit', date: day(1) });
+    const otherAccount = await createAccount(otherOrg.id);
+    const otherTx = await createTransaction(otherOrg.id, { accountId: otherAccount.id, amountKobo: 1000n, direction: 'debit', date: day(1) });
 
     const response = await request(app)
-      .post(`/api/v1/transactions/${otherTx._id}/corrections`)
+      .post(`/api/v1/transactions/${otherTx.id}/corrections`)
       .set('authorization', authHeader)
       .send({ category: 'OTHER' });
 
@@ -288,28 +288,28 @@ describe('transaction.reviewStatus follows its flags', () => {
     const { app, orgId, accountId, authHeader } = await setupOrgWithToken();
     const tx = await createTransaction(orgId, { accountId, amountKobo: 1000n, direction: 'debit', date: day(3) });
 
-    await createFlag(orgId, { transactionId: tx._id.toString(), type: 'LOW_CONFIDENCE', reason: 'r' });
+    await createFlag(orgId, { transactionId: tx.id, type: 'LOW_CONFIDENCE', reason: 'r' });
 
-    const reread = await TransactionModel.findOne({ organisationId: orgId, _id: tx._id }).lean();
+    const reread = await findTransaction(tx.id);
     expect(reread?.reviewStatus).toBe('open');
 
     const listed = await request(app).get('/api/v1/transactions?reviewStatus=open').set('authorization', authHeader);
-    expect(listed.body.transactions.map((t: { id: string }) => t.id)).toContain(tx._id.toString());
+    expect(listed.body.transactions.map((t: { id: string }) => t.id)).toContain(tx.id);
   });
 
   it("stays 'open' until the last open flag is resolved, then moves to 'resolved'", async () => {
     const { app, orgId, accountId, authHeader } = await setupOrgWithToken();
     const tx = await createTransaction(orgId, { accountId, amountKobo: 1000n, direction: 'debit', date: day(4) });
-    await createFlag(orgId, { transactionId: tx._id.toString(), type: 'LOW_CONFIDENCE', reason: 'r1' });
-    await createFlag(orgId, { transactionId: tx._id.toString(), type: 'UNUSUALLY_LARGE', reason: 'r2' });
-    const flags = await ReviewFlagModel.find({ organisationId: orgId, transactionId: tx._id }).lean();
+    await createFlag(orgId, { transactionId: tx.id, type: 'LOW_CONFIDENCE', reason: 'r1' });
+    await createFlag(orgId, { transactionId: tx.id, type: 'UNUSUALLY_LARGE', reason: 'r2' });
+    const flags = await db().reviewFlag.findMany({ where: { organisationId: orgId, transactionId: tx.id }, orderBy: { createdAt: 'asc' } });
 
-    await request(app).post(`/api/v1/review/flags/${flags[0]!._id}/resolve`).set('authorization', authHeader);
-    let reread = await TransactionModel.findOne({ organisationId: orgId, _id: tx._id }).lean();
+    await request(app).post(`/api/v1/review/flags/${flags[0]!.id}/resolve`).set('authorization', authHeader);
+    let reread = await findTransaction(tx.id);
     expect(reread?.reviewStatus).toBe('open');
 
-    await request(app).post(`/api/v1/review/flags/${flags[1]!._id}/resolve`).set('authorization', authHeader);
-    reread = await TransactionModel.findOne({ organisationId: orgId, _id: tx._id }).lean();
+    await request(app).post(`/api/v1/review/flags/${flags[1]!.id}/resolve`).set('authorization', authHeader);
+    reread = await findTransaction(tx.id);
     expect(reread?.reviewStatus).toBe('resolved');
   });
 
@@ -323,11 +323,11 @@ describe('transaction.reviewStatus follows its flags', () => {
       category: { value: 'MARKETING', source: 'ai', confidence: 0.42 },
       classificationStatus: 'classified',
     });
-    await createFlag(orgId, { transactionId: tx._id.toString(), type: 'LOW_CONFIDENCE', reason: 'r' });
+    await createFlag(orgId, { transactionId: tx.id, type: 'LOW_CONFIDENCE', reason: 'r' });
 
-    await request(app).post(`/api/v1/transactions/${tx._id}/corrections`).set('authorization', authHeader).send({ category: 'SOFTWARE' });
+    await request(app).post(`/api/v1/transactions/${tx.id}/corrections`).set('authorization', authHeader).send({ category: 'SOFTWARE' });
 
-    const reread = await TransactionModel.findOne({ organisationId: orgId, _id: tx._id }).lean();
+    const reread = await findTransaction(tx.id);
     expect(reread?.reviewStatus).toBe('resolved');
   });
 });

@@ -1,15 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import request from 'supertest';
-import { TransactionModel } from '../src/models/transaction.model.js';
 import { buildApp } from '../src/app.js';
-import { createAccount, createOrganisation, createUser, uniqueEmail } from './fixtures.js';
+import { createAccount, createOrganisation, createTransaction, createUser, db, findTransaction, uniqueEmail } from './fixtures.js';
 
 async function setupOrgWithToken() {
   const password = 'ingestion-test-password';
   const org = await createOrganisation('Ingestion Test Co');
   const email = uniqueEmail('ingestion');
-  await createUser(org._id.toString(), { email, password });
-  const account = await createAccount(org._id.toString());
+  await createUser(org.id, { email, password });
+  const account = await createAccount(org.id);
 
   const app = buildApp();
   const loginResponse = await request(app).post('/api/v1/auth/login').send({ email, password });
@@ -37,7 +36,7 @@ describe('POST /api/v1/transactions', () => {
     const response = await request(app)
       .post('/api/v1/transactions')
       .set('authorization', authHeader)
-      .send(baseRow(account._id.toString()));
+      .send(baseRow(account.id));
 
     expect(response.status).toBe(201);
     expect(response.body.amount).toBe('12999.75');
@@ -50,7 +49,7 @@ describe('POST /api/v1/transactions', () => {
     const response = await request(app)
       .post('/api/v1/transactions')
       .set('authorization', authHeader)
-      .send(baseRow(account._id.toString(), { amount: 12999.75 }));
+      .send(baseRow(account.id, { amount: 12999.75 }));
 
     expect(response.status).toBe(400);
     expect(response.body.error.code).toBe('VALIDATION_ERROR');
@@ -61,14 +60,14 @@ describe('POST /api/v1/transactions', () => {
     const response = await request(app)
       .post('/api/v1/transactions')
       .set('authorization', authHeader)
-      .send(baseRow(account._id.toString(), { amount: '100.001' }));
+      .send(baseRow(account.id, { amount: '100.001' }));
 
     expect(response.status).toBe(400);
   });
 
   it('returns the original with 200 when the same reference is imported twice with identical fields', async () => {
     const { app, account, authHeader } = await setupOrgWithToken();
-    const row = baseRow(account._id.toString());
+    const row = baseRow(account.id);
 
     const first = await request(app).post('/api/v1/transactions').set('authorization', authHeader).send(row);
     const second = await request(app).post('/api/v1/transactions').set('authorization', authHeader).send(row);
@@ -80,7 +79,7 @@ describe('POST /api/v1/transactions', () => {
 
   it('returns 409 when the same reference is imported again with different fields', async () => {
     const { app, account, authHeader } = await setupOrgWithToken();
-    const row = baseRow(account._id.toString());
+    const row = baseRow(account.id);
 
     const first = await request(app).post('/api/v1/transactions').set('authorization', authHeader).send(row);
     const conflicting = await request(app)
@@ -96,19 +95,19 @@ describe('POST /api/v1/transactions', () => {
   it("returns 404 for a transaction imported against another organisation's account", async () => {
     const { app, authHeader } = await setupOrgWithToken();
     const otherOrg = await createOrganisation('Someone Else Co');
-    const otherAccount = await createAccount(otherOrg._id.toString());
+    const otherAccount = await createAccount(otherOrg.id);
 
     const response = await request(app)
       .post('/api/v1/transactions')
       .set('authorization', authHeader)
-      .send(baseRow(otherAccount._id.toString()));
+      .send(baseRow(otherAccount.id));
 
     expect(response.status).toBe(404);
   });
 
   it('creates exactly one document for 20 concurrent imports of the same reference', async () => {
     const { app, account, authHeader } = await setupOrgWithToken();
-    const row = baseRow(account._id.toString());
+    const row = baseRow(account.id);
 
     const responses = await Promise.all(
       Array.from({ length: 20 }, () =>
@@ -121,10 +120,8 @@ describe('POST /api/v1/transactions', () => {
     expect(created.length).toBe(1);
     expect(duplicates.length).toBe(19);
 
-    const count = await TransactionModel.countDocuments({
-      organisationId: account.organisationId,
-      accountId: account._id,
-      externalReference: row.externalReference,
+    const count = await db().transaction.count({
+      where: { organisationId: account.organisationId, accountId: account.id, externalReference: row.externalReference },
     });
     expect(count).toBe(1);
   });
@@ -133,20 +130,20 @@ describe('POST /api/v1/transactions', () => {
 describe('POST /api/v1/transactions/batch', () => {
   it('reports created, duplicate and failed rows with a matching summary', async () => {
     const { app, account, authHeader } = await setupOrgWithToken();
-    const existingRow = baseRow(account._id.toString());
+    const existingRow = baseRow(account.id);
     await request(app).post('/api/v1/transactions').set('authorization', authHeader).send(existingRow);
 
     const otherOrg = await createOrganisation('Not My Org');
-    const otherAccount = await createAccount(otherOrg._id.toString());
+    const otherAccount = await createAccount(otherOrg.id);
 
     const repeatedRef = `batch-dup-${Math.random().toString(36).slice(2)}`;
     const batch = [
-      baseRow(account._id.toString()), // created
+      baseRow(account.id), // created
       existingRow, // duplicate: already in the database
-      baseRow(account._id.toString(), { externalReference: repeatedRef }), // created
-      baseRow(account._id.toString(), { externalReference: repeatedRef }), // duplicate: repeats row 2 in this batch
-      baseRow(otherAccount._id.toString()), // failed: not this organisation's account
-      baseRow(account._id.toString(), { amount: 'not-a-number' }), // failed: validation
+      baseRow(account.id, { externalReference: repeatedRef }), // created
+      baseRow(account.id, { externalReference: repeatedRef }), // duplicate: repeats row 2 in this batch
+      baseRow(otherAccount.id), // failed: not this organisation's account
+      baseRow(account.id, { amount: 'not-a-number' }), // failed: validation
     ];
 
     const response = await request(app)
@@ -168,7 +165,7 @@ describe('POST /api/v1/transactions/batch', () => {
 
   it('is safe to resend in full: every row becomes a duplicate on the second attempt', async () => {
     const { app, account, authHeader } = await setupOrgWithToken();
-    const batch = [baseRow(account._id.toString()), baseRow(account._id.toString())];
+    const batch = [baseRow(account.id), baseRow(account.id)];
 
     const first = await request(app)
       .post('/api/v1/transactions/batch')
@@ -182,7 +179,7 @@ describe('POST /api/v1/transactions/batch', () => {
     expect(first.body.summary).toEqual({ created: 2, duplicate: 0, failed: 0 });
     expect(resend.body.summary).toEqual({ created: 0, duplicate: 2, failed: 0 });
 
-    const count = await TransactionModel.countDocuments({ organisationId: account.organisationId, accountId: account._id });
+    const count = await db().transaction.count({ where: { organisationId: account.organisationId, accountId: account.id } });
     expect(count).toBe(2);
   });
 
@@ -196,31 +193,28 @@ describe('POST /api/v1/transactions/batch', () => {
     const tooLarge = await request(app)
       .post('/api/v1/transactions/batch')
       .set('authorization', authHeader)
-      .send({ transactions: Array.from({ length: 1001 }, () => baseRow(account._id.toString())) });
+      .send({ transactions: Array.from({ length: 1001 }, () => baseRow(account.id)) });
 
     expect(empty.status).toBe(400);
     expect(tooLarge.status).toBe(400);
   });
 });
 
-describe('amountKobo round trip through MongoDB', () => {
+describe('amountKobo round trip through Postgres', () => {
   it('stores and reads back a value above Number.MAX_SAFE_INTEGER as a bigint, unchanged', async () => {
     const { account } = await setupOrgWithToken();
     const hugeKobo = 9007199254740999n; // above Number.MAX_SAFE_INTEGER (9_007_199_254_740_991)
 
-    const created = await TransactionModel.create({
-      organisationId: account.organisationId,
-      accountId: account._id,
+    const created = await createTransaction(account.organisationId, {
+      accountId: account.id,
       externalReference: `huge-${Math.random().toString(36).slice(2)}`,
       amountKobo: hugeKobo,
       direction: 'credit',
-      currency: 'NGN',
       narration: 'Large capital injection',
-      merchant: null,
       date: new Date('2024-01-01'),
     });
 
-    const reread = await TransactionModel.findOne({ organisationId: account.organisationId, _id: created._id }).lean();
+    const reread = await findTransaction(created.id);
     expect(typeof reread?.amountKobo).toBe('bigint');
     expect(reread?.amountKobo).toBe(hugeKobo);
   });

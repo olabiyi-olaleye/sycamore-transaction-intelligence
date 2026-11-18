@@ -21,16 +21,16 @@ function runWithEnv(env: Record<string, string | undefined>) {
 }
 
 describe('config', () => {
-  it('exits non-zero and explains why when MONGO_URI is missing', () => {
-    const result = runWithEnv({ MONGO_URI: '', JWT_SECRET: 'a-sufficiently-long-secret-for-testing' });
+  it('exits non-zero and explains why when DATABASE_URL is missing', () => {
+    const result = runWithEnv({ DATABASE_URL: '', JWT_SECRET: 'a-sufficiently-long-secret-for-testing' });
 
     expect(result.status).toBe(1);
-    expect(result.stderr).toContain('MONGO_URI');
+    expect(result.stderr).toContain('DATABASE_URL');
   });
 
   it('exits non-zero when JWT_SECRET is too short', () => {
     const result = runWithEnv({
-      MONGO_URI: 'mongodb://localhost:27017/sycamore_test?replicaSet=rs0&directConnection=true',
+      DATABASE_URL: 'postgresql://sycamore_app:x@localhost:5432/sycamore_test',
       JWT_SECRET: 'short',
     });
 
@@ -40,7 +40,7 @@ describe('config', () => {
 
   it('starts cleanly with valid config', () => {
     const result = runWithEnv({
-      MONGO_URI: 'mongodb://localhost:27017/sycamore_test?replicaSet=rs0&directConnection=true',
+      DATABASE_URL: 'postgresql://sycamore_app:x@localhost:5432/sycamore_test',
       JWT_SECRET: 'test-only-secret-not-for-real-use-but-long-enough',
     });
 

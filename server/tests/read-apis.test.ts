@@ -7,8 +7,8 @@ async function setupOrgWithToken() {
   const password = 'read-api-test-password';
   const org = await createOrganisation('Read API Test Co');
   const email = uniqueEmail('read-api');
-  await createUser(org._id.toString(), { email, password });
-  const account = await createAccount(org._id.toString());
+  await createUser(org.id, { email, password });
+  const account = await createAccount(org.id);
 
   const app = buildApp();
   const loginResponse = await request(app).post('/api/v1/auth/login').send({ email, password });
@@ -21,9 +21,9 @@ const day = (n: number) => new Date(`2024-01-${String(n).padStart(2, '0')}T12:00
 describe('GET /api/v1/transactions', () => {
   it('paginates by keyset cursor, newest first, with no gaps or repeats', async () => {
     const { app, account, authHeader } = await setupOrgWithToken();
-    const accountId = account._id.toString();
+    const accountId = account.id;
     for (let n = 1; n <= 5; n += 1) {
-      await createTransaction(account.organisationId.toString(), {
+      await createTransaction(account.organisationId, {
         accountId,
         amountKobo: 1000n * BigInt(n),
         direction: 'debit',
@@ -54,14 +54,14 @@ describe('GET /api/v1/transactions', () => {
 
   it('filters by accountId, direction, category, reviewStatus and date range', async () => {
     const { app, org, account, authHeader } = await setupOrgWithToken();
-    const otherAccount = await createAccount(org._id.toString(), { name: 'Second Account' });
-    const orgId = org._id.toString();
+    const otherAccount = await createAccount(org.id, { name: 'Second Account' });
+    const orgId = org.id;
 
-    await createTransaction(orgId, { accountId: account._id.toString(), amountKobo: 50000n, direction: 'debit', date: day(5), category: { value: 'SOFTWARE', source: 'rule', confidence: 0.95 } });
-    await createTransaction(orgId, { accountId: account._id.toString(), amountKobo: 70000n, direction: 'credit', date: day(10), reviewStatus: 'open' });
-    await createTransaction(orgId, { accountId: otherAccount._id.toString(), amountKobo: 90000n, direction: 'debit', date: day(15) });
+    await createTransaction(orgId, { accountId: account.id, amountKobo: 50000n, direction: 'debit', date: day(5), category: { value: 'SOFTWARE', source: 'rule', confidence: 0.95 } });
+    await createTransaction(orgId, { accountId: account.id, amountKobo: 70000n, direction: 'credit', date: day(10), reviewStatus: 'open' });
+    await createTransaction(orgId, { accountId: otherAccount.id, amountKobo: 90000n, direction: 'debit', date: day(15) });
 
-    const byAccount = await request(app).get(`/api/v1/transactions?accountId=${account._id}`).set('authorization', authHeader);
+    const byAccount = await request(app).get(`/api/v1/transactions?accountId=${account.id}`).set('authorization', authHeader);
     expect(byAccount.body.transactions.length).toBe(2);
 
     const byDirection = await request(app).get('/api/v1/transactions?direction=credit').set('authorization', authHeader);
@@ -83,10 +83,10 @@ describe('GET /api/v1/transactions', () => {
 
   it('filters by minAmount and maxAmount', async () => {
     const { app, org, account, authHeader } = await setupOrgWithToken();
-    const orgId = org._id.toString();
-    await createTransaction(orgId, { accountId: account._id.toString(), amountKobo: 10000n, direction: 'debit', date: day(1) });
-    await createTransaction(orgId, { accountId: account._id.toString(), amountKobo: 500000n, direction: 'debit', date: day(2) });
-    await createTransaction(orgId, { accountId: account._id.toString(), amountKobo: 5000000n, direction: 'debit', date: day(3) });
+    const orgId = org.id;
+    await createTransaction(orgId, { accountId: account.id, amountKobo: 10000n, direction: 'debit', date: day(1) });
+    await createTransaction(orgId, { accountId: account.id, amountKobo: 500000n, direction: 'debit', date: day(2) });
+    await createTransaction(orgId, { accountId: account.id, amountKobo: 5000000n, direction: 'debit', date: day(3) });
 
     const response = await request(app)
       .get('/api/v1/transactions?minAmount=1000.00&maxAmount=10000.00')
@@ -98,9 +98,9 @@ describe('GET /api/v1/transactions', () => {
 
   it('searches narration and merchant via q', async () => {
     const { app, org, account, authHeader } = await setupOrgWithToken();
-    const orgId = org._id.toString();
-    await createTransaction(orgId, { accountId: account._id.toString(), amountKobo: 10000n, direction: 'debit', date: day(1), narration: 'AWS hosting invoice' });
-    await createTransaction(orgId, { accountId: account._id.toString(), amountKobo: 20000n, direction: 'debit', date: day(2), narration: 'Office rent', merchant: 'Landlord Ltd' });
+    const orgId = org.id;
+    await createTransaction(orgId, { accountId: account.id, amountKobo: 10000n, direction: 'debit', date: day(1), narration: 'AWS hosting invoice' });
+    await createTransaction(orgId, { accountId: account.id, amountKobo: 20000n, direction: 'debit', date: day(2), narration: 'Office rent', merchant: 'Landlord Ltd' });
 
     const response = await request(app).get('/api/v1/transactions?q=hosting').set('authorization', authHeader);
     expect(response.body.transactions).toHaveLength(1);
@@ -111,8 +111,8 @@ describe('GET /api/v1/transactions', () => {
 describe('GET /api/v1/transactions?q= with a reference', () => {
   it('matches a pasted reference exactly instead of running a text search', async () => {
     const { app, account, authHeader } = await setupOrgWithToken();
-    const orgId = account.organisationId.toString();
-    const accountId = account._id.toString();
+    const orgId = account.organisationId;
+    const accountId = account.id;
     await createTransaction(orgId, { accountId, amountKobo: 1000n, direction: 'debit', date: day(10), externalReference: 'TRF/0012' });
     await createTransaction(orgId, { accountId, amountKobo: 2000n, direction: 'debit', date: day(11), externalReference: 'TRF/0013' });
 
@@ -124,8 +124,8 @@ describe('GET /api/v1/transactions?q= with a reference', () => {
 
   it('matches a reference with no digits, and still text-searches a word that is not a reference', async () => {
     const { app, account, authHeader } = await setupOrgWithToken();
-    const orgId = account.organisationId.toString();
-    const accountId = account._id.toString();
+    const orgId = account.organisationId;
+    const accountId = account.id;
     await createTransaction(orgId, { accountId, amountKobo: 1000n, direction: 'debit', date: day(12), externalReference: 'ops-dup-a', narration: 'Supplier payment' });
     await createTransaction(orgId, { accountId, amountKobo: 2000n, direction: 'debit', date: day(13), externalReference: 'ops-x', narration: 'Generator diesel' });
 
@@ -140,20 +140,20 @@ describe('GET /api/v1/transactions?q= with a reference', () => {
 describe('GET /api/v1/transactions/:id', () => {
   it('returns the transaction with empty classification history and flags for now', async () => {
     const { app, org, account, authHeader } = await setupOrgWithToken();
-    const tx = await createTransaction(org._id.toString(), { accountId: account._id.toString(), amountKobo: 10000n, direction: 'debit', date: day(1) });
+    const tx = await createTransaction(org.id, { accountId: account.id, amountKobo: 10000n, direction: 'debit', date: day(1) });
 
-    const response = await request(app).get(`/api/v1/transactions/${tx._id}`).set('authorization', authHeader);
+    const response = await request(app).get(`/api/v1/transactions/${tx.id}`).set('authorization', authHeader);
     expect(response.status).toBe(200);
-    expect(response.body).toMatchObject({ id: tx._id.toString(), classificationHistory: [], flags: [] });
+    expect(response.body).toMatchObject({ id: tx.id, classificationHistory: [], flags: [] });
   });
 
   it('returns 404 for an id from another organisation', async () => {
     const { app, authHeader } = await setupOrgWithToken();
     const otherOrg = await createOrganisation('Other Org For Detail');
-    const otherAccount = await createAccount(otherOrg._id.toString());
-    const otherTx = await createTransaction(otherOrg._id.toString(), { accountId: otherAccount._id.toString(), amountKobo: 1000n, direction: 'debit', date: day(1) });
+    const otherAccount = await createAccount(otherOrg.id);
+    const otherTx = await createTransaction(otherOrg.id, { accountId: otherAccount.id, amountKobo: 1000n, direction: 'debit', date: day(1) });
 
-    const response = await request(app).get(`/api/v1/transactions/${otherTx._id}`).set('authorization', authHeader);
+    const response = await request(app).get(`/api/v1/transactions/${otherTx.id}`).set('authorization', authHeader);
     expect(response.status).toBe(404);
   });
 
@@ -167,8 +167,8 @@ describe('GET /api/v1/transactions/:id', () => {
 describe('GET /api/v1/dashboard/summary', () => {
   it('computes inflows, outflows, net and spending by category exactly, with no float drift', async () => {
     const { app, org, account, authHeader } = await setupOrgWithToken();
-    const orgId = org._id.toString();
-    const accountId = account._id.toString();
+    const orgId = org.id;
+    const accountId = account.id;
 
     await createTransaction(orgId, { accountId, amountKobo: 150000075n, direction: 'credit', date: day(1) }); // 1,500,000.75
     await createTransaction(orgId, { accountId, amountKobo: 25000n, direction: 'debit', date: day(2), category: { value: 'SOFTWARE', source: 'rule', confidence: 0.9 } }); // 250.00
@@ -197,8 +197,8 @@ describe('GET /api/v1/dashboard/summary', () => {
 
   it('respects the from/to range', async () => {
     const { app, org, account, authHeader } = await setupOrgWithToken();
-    const orgId = org._id.toString();
-    const accountId = account._id.toString();
+    const orgId = org.id;
+    const accountId = account.id;
     await createTransaction(orgId, { accountId, amountKobo: 10000n, direction: 'credit', date: day(1) });
     await createTransaction(orgId, { accountId, amountKobo: 999999900n, direction: 'credit', date: day(20) });
 
@@ -211,11 +211,11 @@ describe('GET /api/v1/dashboard/summary', () => {
 
   it("never includes another organisation's totals", async () => {
     const { app, org, account, authHeader } = await setupOrgWithToken();
-    await createTransaction(org._id.toString(), { accountId: account._id.toString(), amountKobo: 10000n, direction: 'credit', date: day(1) });
+    await createTransaction(org.id, { accountId: account.id, amountKobo: 10000n, direction: 'credit', date: day(1) });
 
     const otherOrg = await createOrganisation('Dashboard Other Org');
-    const otherAccount = await createAccount(otherOrg._id.toString());
-    await createTransaction(otherOrg._id.toString(), { accountId: otherAccount._id.toString(), amountKobo: 999999999n, direction: 'credit', date: day(1) });
+    const otherAccount = await createAccount(otherOrg.id);
+    await createTransaction(otherOrg.id, { accountId: otherAccount.id, amountKobo: 999999999n, direction: 'credit', date: day(1) });
 
     const response = await request(app).get('/api/v1/dashboard/summary').set('authorization', authHeader);
     expect(response.body.inflows).toBe('100.00');

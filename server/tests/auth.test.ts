@@ -10,7 +10,7 @@ describe('POST /api/v1/auth/login', () => {
   beforeAll(async () => {
     const org = await createOrganisation('Login Test Co');
     email = uniqueEmail('login');
-    await createUser(org._id.toString(), { email, password, name: 'Ada', role: 'admin' });
+    await createUser(org.id, { email, password, name: 'Ada', role: 'admin' });
   });
 
   it('returns a token and the user on correct credentials', async () => {
@@ -53,7 +53,7 @@ describe('GET /api/v1/me', () => {
     const password = 'another-strong-password';
     const org = await createOrganisation('Me Route Co');
     const email = uniqueEmail('me-route');
-    await createUser(org._id.toString(), { email, password, name: 'Bola', role: 'member' });
+    await createUser(org.id, { email, password, name: 'Bola', role: 'member' });
 
     const app = buildApp();
     const loginResponse = await request(app).post('/api/v1/auth/login').send({ email, password });

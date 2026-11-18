@@ -15,9 +15,9 @@ describe('GET /health', () => {
 
   it('reports the classification queue, including how long the oldest due row has waited', async () => {
     const org = await createOrganisation('Health Queue Co');
-    const account = await createAccount(org._id.toString());
-    await createTransaction(org._id.toString(), {
-      accountId: account._id.toString(),
+    const account = await createAccount(org.id);
+    await createTransaction(org.id, {
+      accountId: account.id,
       amountKobo: 1000n,
       direction: 'debit',
       date: new Date(),
