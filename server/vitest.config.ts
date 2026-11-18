@@ -14,6 +14,7 @@ export default defineConfig({
       MONGO_URI: 'mongodb://localhost:27017/sycamore_test?replicaSet=rs0&directConnection=true',
       JWT_SECRET: 'test-only-secret-not-for-real-use',
       LOG_LEVEL: 'silent',
+      CLASSIFIER_PROVIDER: 'mock',
       MOCK_LLM_MODE: 'ok',
       MOCK_LLM_FAILURE_RATE: '0',
       WORKER_POLL_INTERVAL_MS: '50',

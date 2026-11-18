@@ -43,6 +43,7 @@ PORT=4000
 MONGO_URI=mongodb://localhost:27017/sycamore?replicaSet=rs0&directConnection=true
 JWT_SECRET=<the same value as above>
 LOG_LEVEL=info
+CLASSIFIER_PROVIDER=mock
 MOCK_LLM_MODE=ok
 MOCK_LLM_FAILURE_RATE=0
 WORKER_POLL_INTERVAL_MS=1000
@@ -289,10 +290,15 @@ accounts, transactions, review flags, and corrections.
 ## 6. AI reliability
 
 `ClassificationProvider` (`services/classification/provider.ts`) is a small interface (one
-`classify(input, signal)` method), so the AI backend can be swapped (mock today, a real
-vendor later) without touching the worker, the retry logic, or anything upstream. Rules are
-deliberately *not* an implementation of it; they're a synchronous pre-filter that runs
-first and never needs swapping.
+`classify(input, signal)` method), and `services/classification/providers.ts` maps a
+`CLASSIFIER_PROVIDER` setting to an implementation. Only `mock` exists today. Adding a real
+vendor means writing one class that implements the interface, registering it there and
+adding its name to the enum in `config/env.ts`; the worker, retries, circuit breaker, review
+flags and history don't change. A test plugs in a fake provider at runtime and checks that
+its answer and its name end up on the transaction and in `classification_events`
+(`classification.test.ts`, "swapping the classification provider"). Rules are deliberately
+*not* an implementation of the interface; they're a synchronous pre-filter that runs first
+and never needs swapping.
 
 Failure handling, all in `classification.service.ts`:
 

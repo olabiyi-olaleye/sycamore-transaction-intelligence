@@ -5,6 +5,8 @@ import { ReviewFlagModel, createFlag } from '../src/models/reviewFlag.model.js';
 import { buildApp } from '../src/app.js';
 import { processOneClaimedTransaction, resetCircuitBreakerForTests } from '../src/services/classification/classification.service.js';
 import { setMockLlmFailureRate, setMockLlmMode } from '../src/services/classification/mockLlmProvider.js';
+import { resetClassificationProvider, setClassificationProvider } from '../src/services/classification/providers.js';
+import { ClassificationEventModel } from '../src/models/classificationEvent.model.js';
 import { createAccount, createOrganisation, createTransaction, createUser, uniqueEmail } from './fixtures.js';
 
 function wait(ms: number): Promise<void> {
@@ -32,6 +34,7 @@ beforeEach(async () => {
 });
 
 afterEach(() => {
+  resetClassificationProvider();
   setMockLlmMode('ok');
   setMockLlmFailureRate(0);
   resetCircuitBreakerForTests();
@@ -162,6 +165,37 @@ describe('AI classification and each mock failure mode', () => {
     expect(reread?.classification.status).toBe('pending');
     expect(reread?.classification.attempts).toBe(1);
   }, 10000);
+});
+
+describe('swapping the classification provider', () => {
+  it('uses whichever provider is plugged in, with nothing else changed', async () => {
+    const { orgId, accountId } = await setupOrgAndAccount();
+    const tx = await createTransaction(orgId, {
+      accountId,
+      amountKobo: 15000n,
+      direction: 'debit',
+      narration: `Campaign spend with an unknown agency ${Date.now()}`,
+      date: new Date(),
+    });
+
+    setClassificationProvider({
+      name: 'fake-vendor',
+      async classify() {
+        return { category: 'MARKETING', confidence: 0.88, reason: 'Fake vendor says marketing' };
+      },
+    });
+
+    for (let i = 0; i < 30; i += 1) {
+      const current = await TransactionModel.findOne({ organisationId: orgId, _id: tx._id }).lean();
+      if (current?.classification.status === 'classified') break;
+      await processOneClaimedTransaction();
+    }
+
+    const reread = await TransactionModel.findOne({ organisationId: orgId, _id: tx._id }).lean();
+    expect(reread?.category).toMatchObject({ value: 'MARKETING', source: 'ai', confidence: 0.88 });
+    const event = await ClassificationEventModel.findOne({ organisationId: orgId, transactionId: tx._id }).lean();
+    expect(event?.provider).toBe('fake-vendor');
+  });
 });
 
 describe('giving up', () => {

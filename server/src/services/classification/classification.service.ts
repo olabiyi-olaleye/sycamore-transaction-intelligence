@@ -12,8 +12,8 @@ import {
 } from '../../models/transaction.model.js';
 import { insertEvent } from '../../models/classificationEvent.model.js';
 import { classifyResultSchema } from '../../validation/classification.validation.js';
-import { mockLlmProvider } from './mockLlmProvider.js';
-import { RateLimitedProviderError, type ClassifyInput, type ClassifyResult } from './provider.js';
+import { getClassificationProvider } from './providers.js';
+import { RateLimitedProviderError, type ClassificationProvider, type ClassifyInput, type ClassifyResult } from './provider.js';
 import { classifyWithRules } from './rules.js';
 
 // A transaction is only given up on after this many bad answers (malformed or
@@ -72,11 +72,11 @@ class InvalidProviderResponseError extends Error {
   }
 }
 
-async function callProviderWithTimeout(input: ClassifyInput): Promise<ClassifyResult> {
+async function callProviderWithTimeout(provider: ClassificationProvider, input: ClassifyInput): Promise<ClassifyResult> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), PROVIDER_TIMEOUT_MS);
   try {
-    const raw = await mockLlmProvider.classify(input, controller.signal);
+    const raw = await provider.classify(input, controller.signal);
     const parsed = classifyResultSchema.safeParse(raw);
     if (!parsed.success) {
       throw new InvalidProviderResponseError(`Provider returned a malformed result: ${parsed.error.issues.map((issue) => issue.message).join('; ')}`);
@@ -170,10 +170,11 @@ async function classifyTransaction(transaction: TransactionDocument): Promise<vo
     return;
   }
 
+  const provider = getClassificationProvider();
   try {
-    const result = await callProviderWithTimeout(input);
+    const result = await callProviderWithTimeout(provider, input);
     recordLlmSuccess();
-    await finishClassification(organisationId, transactionId, result, 'ai', mockLlmProvider.name);
+    await finishClassification(organisationId, transactionId, result, 'ai', provider.name);
   } catch (error) {
     const message = (error as Error).message;
     if (error instanceof InvalidProviderResponseError) {

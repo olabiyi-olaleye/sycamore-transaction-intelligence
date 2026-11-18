@@ -9,6 +9,8 @@ const schema = z.object({
   MONGO_URI: z.string().min(1, 'MONGO_URI is required'),
   JWT_SECRET: z.string().min(32, 'JWT_SECRET should be a long random string, not a guessable word'),
   LOG_LEVEL: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent']).default('info'),
+  // Which ClassificationProvider the worker calls; see services/classification/providers.ts.
+  CLASSIFIER_PROVIDER: z.enum(['mock']).default('mock'),
   MOCK_LLM_MODE: z.enum(['ok', 'slow', 'down', 'rate_limited', 'invalid']).default('ok'),
   MOCK_LLM_FAILURE_RATE: z.coerce.number().min(0).max(1).default(0),
   WORKER_POLL_INTERVAL_MS: z.coerce.number().int().positive().default(1000),
