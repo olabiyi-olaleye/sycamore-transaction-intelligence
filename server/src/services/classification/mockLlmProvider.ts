@@ -1,5 +1,5 @@
 import { config } from '../../config/env.js';
-import { categoriesForDirection } from '../../constants/categories.js';
+import { categoriesForDirection, type Category } from '../../constants/categories.js';
 import { RateLimitedProviderError, type ClassificationProvider, type ClassifyInput, type ClassifyResult } from './provider.js';
 
 export type MockLlmMode = 'ok' | 'slow' | 'down' | 'rate_limited' | 'invalid';
@@ -37,6 +37,19 @@ function djb2(text: string): number {
   return hash >>> 0;
 }
 
+// Rough keyword hints, so the mock behaves a bit like a real model: a
+// recognisable narration gets a sensible category with fair-to-high
+// confidence, and a vague one ("Misc disbursement") gets a guess with low
+// confidence, which is what feeds the LOW_CONFIDENCE review flag.
+const HINTS: Array<{ pattern: RegExp; category: Category; direction?: 'credit' | 'debit' }> = [
+  { pattern: /supplies|supplier|raw material|inventory|equipment|purchase/i, category: 'OTHER', direction: 'debit' },
+  { pattern: /internet|data plan|spectranet|\bmtn\b|airtel|\bglo\b/i, category: 'UTILITIES', direction: 'debit' },
+  { pattern: /advert|campaign|marketing|promo|billboard/i, category: 'MARKETING', direction: 'debit' },
+  { pattern: /flight|hotel|airline|\buber\b|\bbolt\b|travel/i, category: 'TRAVEL', direction: 'debit' },
+  { pattern: /subscription|licen[cs]e|\bsaas\b/i, category: 'SOFTWARE', direction: 'debit' },
+  { pattern: /\bfees?\b|bank charge|commission/i, category: 'BANKING_FEES', direction: 'debit' },
+];
+
 export function pseudoClassify(input: ClassifyInput): ClassifyResult {
   const text = `${input.narration} ${input.merchant ?? ''}`.toLowerCase();
   const categoryHash = djb2(text);
@@ -46,10 +59,16 @@ export function pseudoClassify(input: ClassifyInput): ClassifyResult {
   // correlated with the template rather than spread out. Falls back to the
   // full text when there's no merchant to hash.
   const confidenceHash = djb2(input.merchant ? input.merchant.toLowerCase() : text);
+  const hint = HINTS.find((h) => (!h.direction || h.direction === input.direction) && h.pattern.test(text));
+  if (hint) {
+    const confidence = 0.62 + (confidenceHash % 33) / 100; // 0.62-0.94
+    return { category: hint.category, confidence, reason: `Mock LLM matched ${hint.category} from the narration` };
+  }
+
   const allowed = categoriesForDirection(input.direction);
   const category = allowed[categoryHash % allowed.length] ?? 'OTHER';
-  const confidence = 0.5 + (confidenceHash % 45) / 100; // spans 0.50-0.94, straddling the 0.6 LOW_CONFIDENCE threshold
-  return { category, confidence, reason: `Mock LLM inferred ${category} from narration pattern` };
+  const confidence = 0.45 + (confidenceHash % 25) / 100; // 0.45-0.69, mostly under the 0.6 LOW_CONFIDENCE threshold
+  return { category, confidence, reason: `Mock LLM guessed ${category}; the narration gives little to go on` };
 }
 
 export const mockLlmProvider: ClassificationProvider = {

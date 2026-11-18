@@ -41,6 +41,18 @@ describe('POSSIBLE_DUPLICATE detector', () => {
     expect(firstFlag).toBeNull();
   });
 
+  it('says "on the same date" when both payments carry the same timestamp', async () => {
+    const { orgId, accountId } = await setupOrgWithToken();
+    await createTransaction(orgId, { accountId, amountKobo: 32575000n, direction: 'debit', date: new Date('2024-02-14T00:00:00.000Z'), externalReference: 'DUP-A' });
+    const second = await createTransaction(orgId, { accountId, amountKobo: 32575000n, direction: 'debit', date: new Date('2024-02-14T00:00:00.000Z'), externalReference: 'DUP-B' });
+
+    await detectPossibleDuplicate(orgId, second);
+
+    const flag = await ReviewFlagModel.findOne({ organisationId: orgId, transactionId: second._id }).lean();
+    expect(flag?.reason).toContain('on the same date');
+    expect(flag?.reason).not.toMatch(/hour/);
+  });
+
   it('does not flag the same amount more than 24 hours apart', async () => {
     const { orgId, accountId } = await setupOrgWithToken();
     await createTransaction(orgId, { accountId, amountKobo: 25000000n, direction: 'debit', date: new Date('2024-02-10T09:00:00.000Z') });
@@ -77,6 +89,22 @@ describe('UNUSUALLY_LARGE detector', () => {
     const flag = await ReviewFlagModel.findOne({ organisationId: orgId, transactionId: large._id }).lean();
     expect(flag?.type).toBe('UNUSUALLY_LARGE');
     expect(flag?.reason).toBe("₦4,500,000.00 is 9x this account's typical debit of ₦500,000.00.");
+  });
+
+  it('does not flag a large debit that repeats a similar payment from about a month earlier', async () => {
+    const { orgId, accountId } = await setupOrgWithToken();
+    const dayOf = (iso: string) => new Date(`${iso}T12:00:00.000Z`);
+    for (let i = 1; i <= 12; i += 1) {
+      await createTransaction(orgId, { accountId, amountKobo: 50000000n, direction: 'debit', date: dayOf(`2024-03-${String(i).padStart(2, '0')}`) });
+    }
+    // Last month's payroll top-up, then this month's, 2% higher.
+    await createTransaction(orgId, { accountId, amountKobo: 450000000n, direction: 'debit', date: dayOf('2024-02-24') });
+    const thisMonth = await createTransaction(orgId, { accountId, amountKobo: 459000000n, direction: 'debit', date: dayOf('2024-03-24') });
+
+    await detectUnusuallyLarge(orgId, thisMonth);
+
+    const flag = await ReviewFlagModel.findOne({ organisationId: orgId, transactionId: thisMonth._id }).lean();
+    expect(flag).toBeNull();
   });
 
   it('does not flag a large debit with fewer than 10 prior debits', async () => {

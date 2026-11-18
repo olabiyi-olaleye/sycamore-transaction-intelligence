@@ -191,7 +191,10 @@ flowchart LR
 
 Two detectors (`POSSIBLE_DUPLICATE`, `UNUSUALLY_LARGE`) run after every classification
 attempt, independent of whether it succeeded. They're about the raw transaction, not its
-category.
+category. `POSSIBLE_DUPLICATE` looks for the same amount from the same account under a
+different reference within 24 hours. `UNUSUALLY_LARGE` compares a debit with the account's
+median debit over 90 days, but skips one that repeats a similar payment (within 5%) from
+20-40 days earlier, so a monthly payroll top-up or rent payment isn't flagged every month.
 
 ## 3. Decisions and why
 
@@ -337,6 +340,13 @@ let every one of those failure paths be exercised on demand; `setMockLlmMode` /
 `setMockLlmFailureRate` (`mockLlmProvider.ts`) make that possible mid-test-run without a
 restart.
 
+The mock is meant to behave roughly like a real model, so the demo data looks plausible: a
+few keyword hints ("supplies", "internet", "flight", "subscription"...) give a recognisable
+narration a sensible category at 62-94% confidence, and anything vague ("Misc
+disbursement") gets a guess at 45-69%, which is what produces `LOW_CONFIDENCE` flags. It
+only ever picks categories that fit the direction: a credit can be Revenue, Transfers or
+Other, and a debit is never Revenue.
+
 ### Observability
 
 - **Structured logs** (`utils/logger.ts`): one JSON object per line, filtered by
@@ -356,7 +366,7 @@ restart.
 
 ## 7. Testing
 
-96 tests, Vitest, `supertest` against the Express app, run against a real MongoDB replica
+103 tests, Vitest, `supertest` against the Express app, run against a real MongoDB replica
 set (no mocked database). `server/tests/setup.ts` connects once per run; most fixtures use a
 fresh organisation/user per test so tests never depend on execution order. The one
 exception is `classification.test.ts`, which documents at the top of the file why it drains

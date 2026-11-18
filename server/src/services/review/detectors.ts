@@ -6,11 +6,16 @@ import { getLargePaymentMultiple } from '../../models/organisation.model.js';
 const DUPLICATE_WINDOW_MS = 24 * 60 * 60 * 1000;
 const NINETY_DAYS_MS = 90 * 24 * 60 * 60 * 1000;
 const MIN_PRIOR_DEBITS = 10;
+const DAY_MS = 24 * 60 * 60 * 1000;
 
+// "3 hours earlier" / "2 hours later". Bank exports often carry a date with
+// no time, so two payments on the same day can have identical timestamps;
+// those read "on the same date" rather than a made-up "1 hour earlier".
 function hoursApartPhrase(transactionDate: Date, candidateDate: Date): string {
   const deltaMs = transactionDate.getTime() - candidateDate.getTime();
-  const hours = Math.max(1, Math.round(Math.abs(deltaMs) / 3_600_000));
-  return deltaMs >= 0 ? `${hours} hour${hours === 1 ? '' : 's'} earlier` : `${hours} hour${hours === 1 ? '' : 's'} later`;
+  const hours = Math.round(Math.abs(deltaMs) / 3_600_000);
+  if (hours === 0) return 'on the same date';
+  return `${hours} hour${hours === 1 ? '' : 's'} ${deltaMs > 0 ? 'earlier' : 'later'}`;
 }
 
 /** Same account, direction and amount, a different reference, within 24 hours either side. */
@@ -38,7 +43,29 @@ export async function detectPossibleDuplicate(organisationId: string, transactio
   });
 }
 
-/** A debit above largePaymentMultiple x the account's median debit over the last 90 days, with at least 10 prior debits. */
+/**
+ * A similar debit (within 5%) on the same account 20-40 days earlier means
+ * this is a monthly payment the business already makes (salaries, a payroll
+ * top-up, rent), so it isn't "unusual" however large it is next to the
+ * account's everyday spending.
+ */
+async function isRecurringMonthly(organisationId: string, transaction: TransactionDocument): Promise<boolean> {
+  const lower = (transaction.amountKobo * 95n) / 100n;
+  const upper = (transaction.amountKobo * 105n) / 100n;
+  const match = await TransactionModel.findOne({
+    organisationId,
+    accountId: transaction.accountId,
+    direction: 'debit',
+    amountKobo: { $gte: lower, $lte: upper },
+    date: { $gte: new Date(transaction.date.getTime() - 40 * DAY_MS), $lte: new Date(transaction.date.getTime() - 20 * DAY_MS) },
+    _id: { $ne: transaction._id },
+  })
+    .select('_id')
+    .lean();
+  return Boolean(match);
+}
+
+/** A debit above largePaymentMultiple x the account's median debit over the last 90 days, with at least 10 prior debits, that isn't a recurring monthly payment. */
 export async function detectUnusuallyLarge(organisationId: string, transaction: TransactionDocument): Promise<void> {
   if (transaction.direction !== 'debit') return;
 
@@ -62,6 +89,7 @@ export async function detectUnusuallyLarge(organisationId: string, transaction: 
 
   const multiplier = await getLargePaymentMultiple(organisationId);
   if (transaction.amountKobo <= median * BigInt(multiplier)) return;
+  if (await isRecurringMonthly(organisationId, transaction)) return;
 
   const multiple = transaction.amountKobo / median; // bigint division, so no float touches the money here
   await createFlag(organisationId, {

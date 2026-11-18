@@ -295,6 +295,8 @@ button.secondary:disabled {
 }
 
 .spend-bar-fill {
+  /* A <span>, so it needs to be a block for width and height to apply. */
+  display: block;
   background: var(--copper);
   height: 100%;
   border-radius: var(--radius-sm);

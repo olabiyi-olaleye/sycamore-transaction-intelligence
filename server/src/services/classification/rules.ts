@@ -12,7 +12,12 @@ interface Rule {
 
 // Confidence 0.9+ on every rule, comfortably above the 0.6 LOW_CONFIDENCE
 // threshold and high enough that a hit never needs the AI step at all.
+// Order matters: the first match wins. Own-account transfers come first, so
+// "Transfer to own account - payroll funding" is a transfer between the
+// business's own accounts, not payroll spend counted twice.
 const RULES: Rule[] = [
+  { pattern: /own account|transfer to self|transfer from operating account/i, category: 'TRANSFERS', confidence: 0.93, reason: "Narration describes a transfer between the business's own accounts" },
+  { pattern: /payment received from|customer payment|pos settlement/i, category: 'REVENUE', confidence: 0.92, reason: 'Narration describes a payment from a customer', direction: 'credit' },
   { pattern: /salary|payroll/i, category: 'PAYROLL', confidence: 0.95, reason: 'Narration mentions salary or payroll', direction: 'debit' },
   { pattern: /\bpaye\b/i, category: 'TAX', confidence: 0.95, reason: 'Narration mentions PAYE' },
   { pattern: /\bfirs\b|vat remittance/i, category: 'TAX', confidence: 0.95, reason: 'Narration mentions FIRS or a VAT remittance' },
@@ -21,7 +26,6 @@ const RULES: Rule[] = [
   { pattern: /\baws\b|amazon web services|google cloud|microsoft azure|github|vercel/i, category: 'SOFTWARE', confidence: 0.93, reason: 'Narration mentions a cloud or software vendor' },
   { pattern: /nip charge|transfer fee|sms alert charge|card maintenance/i, category: 'BANKING_FEES', confidence: 0.97, reason: 'Narration mentions a bank fee' },
   { pattern: /\brent\b/i, category: 'RENT', confidence: 0.9, reason: 'Narration mentions rent' },
-  { pattern: /own account transfer|transfer to self/i, category: 'TRANSFERS', confidence: 0.9, reason: 'Narration indicates an own-account transfer' },
 ];
 
 /** Returns null when no rule decides, which means "ask the AI provider". */

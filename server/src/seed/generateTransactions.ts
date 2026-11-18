@@ -243,7 +243,7 @@ export function generateSeedRows(org: SeedOrganisation): SeedTransactionRow[] {
   });
 
   // A duplicate payment pair for the POSSIBLE_DUPLICATE detector: same
-  // amount and account, different reference, a few hours apart.
+  // amount and account, different reference, same date.
   const duplicateSupplier = profile.suppliers[0]!;
   rows.push({
     accountSlug: operating.slug,

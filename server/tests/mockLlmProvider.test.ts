@@ -20,3 +20,16 @@ describe('mock LLM categories follow the direction', () => {
     }
   });
 });
+
+describe('mock LLM hints', () => {
+  it('gives a recognisable supplier payment a sensible category with fair confidence', () => {
+    const result = pseudoClassify({ narration: 'Payment to Dangote Flour Mills for supplies', merchant: 'Dangote Flour Mills', direction: 'debit', amountKobo: 100000n });
+    expect(result.category).toBe('OTHER');
+    expect(result.confidence).toBeGreaterThanOrEqual(0.62);
+  });
+
+  it('is unsure about a vague narration', () => {
+    const result = pseudoClassify({ narration: 'Misc disbursement', merchant: null, direction: 'debit', amountKobo: 100000n });
+    expect(result.confidence).toBeLessThan(0.7);
+  });
+});
