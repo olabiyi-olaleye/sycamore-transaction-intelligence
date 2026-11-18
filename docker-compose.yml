@@ -1,57 +1,66 @@
+# Local development stack: Postgres, a one-off migration step, the API, the
+# classification worker and the web app. The passwords below are local
+# development defaults; override any of them in the root .env.
+
+x-server-env: &server-env
+  NODE_ENV: development
+  DATABASE_URL: "postgresql://sycamore_app:${APP_DB_PASSWORD:-app_dev_password}@postgres:5432/sycamore"
+  SYSTEM_DATABASE_URL: "postgresql://sycamore_system:${SYSTEM_DB_PASSWORD:-system_dev_password}@postgres:5432/sycamore"
+  JWT_SECRET: "${JWT_SECRET}"
+  LOG_LEVEL: "info"
+  CLASSIFIER_PROVIDER: "${CLASSIFIER_PROVIDER:-mock}"
+  MOCK_LLM_MODE: "${MOCK_LLM_MODE:-ok}"
+  MOCK_LLM_FAILURE_RATE: "${MOCK_LLM_FAILURE_RATE:-0}"
+  WORKER_POLL_INTERVAL_MS: "1000"
+  WORKER_LOCK_MS: "30000"
+  WORKER_BATCH_SIZE: "25"
+  SEED_PASSWORD: "${SEED_PASSWORD}"
+
 services:
-  mongo:
-    image: mongo:7
-    command: ["--replSet", "rs0", "--bind_ip_all"]
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:-postgres}"
+      POSTGRES_DB: sycamore
+      # Read by prisma/init/01-roles.sh on first start, to create the two
+      # roles the app connects as.
+      APP_DB_PASSWORD: "${APP_DB_PASSWORD:-app_dev_password}"
+      SYSTEM_DB_PASSWORD: "${SYSTEM_DB_PASSWORD:-system_dev_password}"
     ports:
-      - "27017:27017"
+      - "5432:5432"
     volumes:
-      - mongo-data:/data/db
+      - postgres-data:/var/lib/postgresql/data
+      - ./server/prisma/init/01-roles.sh:/docker-entrypoint-initdb.d/01-roles.sh:ro
+      # Outside docker-entrypoint-initdb.d on purpose: the image would try to
+      # run a .sql file there directly, without the password variables.
+      - ./server/prisma/init/roles.sql:/sycamore-init/roles.sql:ro
     healthcheck:
-      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping')"]
+      test: ["CMD-SHELL", "pg_isready -U postgres -d sycamore"]
       interval: 5s
       timeout: 5s
       retries: 10
 
-  # Multi-document transactions (used by the correction endpoint) require a
-  # replica set even with a single node, so this runs rs.initiate() once and
-  # exits; api/worker wait on it completing successfully.
-  mongo-init:
-    image: mongo:7
+  # Applies prisma/migrations as the database owner, then exits. The API and
+  # worker start only after it succeeds.
+  migrate:
+    build: ./server
     depends_on:
-      mongo:
+      postgres:
         condition: service_healthy
     restart: "no"
-    entrypoint:
-      - bash
-      - -c
-      - |
-        mongosh --host mongo:27017 --eval '
-          try {
-            rs.status().ok;
-            print("replica set already initiated");
-          } catch (e) {
-            rs.initiate({ _id: "rs0", members: [{ _id: 0, host: "mongo:27017" }] });
-            print("replica set initiated");
-          }
-        '
+    environment:
+      MIGRATE_DATABASE_URL: "postgresql://postgres:${POSTGRES_PASSWORD:-postgres}@postgres:5432/sycamore"
+    command: ["npx", "prisma", "migrate", "deploy"]
 
   api:
     build: ./server
     depends_on:
-      mongo-init:
+      migrate:
         condition: service_completed_successfully
     environment:
-      NODE_ENV: development
+      <<: *server-env
       PORT: "4000"
-      MONGO_URI: "mongodb://mongo:27017/sycamore?replicaSet=rs0"
-      JWT_SECRET: "${JWT_SECRET}"
-      LOG_LEVEL: "info"
-      CLASSIFIER_PROVIDER: "${CLASSIFIER_PROVIDER:-mock}"
-      MOCK_LLM_MODE: "${MOCK_LLM_MODE}"
-      MOCK_LLM_FAILURE_RATE: "${MOCK_LLM_FAILURE_RATE}"
-      WORKER_POLL_INTERVAL_MS: "1000"
-      WORKER_LOCK_MS: "30000"
-      SEED_PASSWORD: "${SEED_PASSWORD}"
     ports:
       - "4000:4000"
     command: ["npx", "tsx", "src/index.ts"]
@@ -59,20 +68,10 @@ services:
   worker:
     build: ./server
     depends_on:
-      mongo-init:
+      migrate:
         condition: service_completed_successfully
     environment:
-      NODE_ENV: development
-      PORT: "4001"
-      MONGO_URI: "mongodb://mongo:27017/sycamore?replicaSet=rs0"
-      JWT_SECRET: "${JWT_SECRET}"
-      LOG_LEVEL: "info"
-      CLASSIFIER_PROVIDER: "${CLASSIFIER_PROVIDER:-mock}"
-      MOCK_LLM_MODE: "${MOCK_LLM_MODE}"
-      MOCK_LLM_FAILURE_RATE: "${MOCK_LLM_FAILURE_RATE}"
-      WORKER_POLL_INTERVAL_MS: "1000"
-      WORKER_LOCK_MS: "30000"
-      SEED_PASSWORD: "${SEED_PASSWORD}"
+      <<: *server-env
     command: ["npx", "tsx", "src/worker.ts"]
 
   web:
@@ -88,4 +87,4 @@ services:
     command: ["npx", "vite", "--host", "0.0.0.0"]
 
 volumes:
-  mongo-data:
+  postgres-data:
