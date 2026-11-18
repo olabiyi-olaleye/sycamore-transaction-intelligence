@@ -1,5 +1,6 @@
 import { config } from '../../config/env.js';
 import { processOneClaimedTransaction } from './classification.service.js';
+import { logger } from '../../utils/logger.js';
 
 function sleep(ms: number, signal: AbortSignal): Promise<void> {
   return new Promise((resolve) => {
@@ -18,7 +19,7 @@ export interface ClaimLoopOptions {
 }
 
 function logError(error: unknown): void {
-  console.error('Worker iteration failed; continuing', error);
+  logger.error('worker_iteration_failed', { error });
 }
 
 // Only sleeps when the queue is empty (or after an error), so a backlog

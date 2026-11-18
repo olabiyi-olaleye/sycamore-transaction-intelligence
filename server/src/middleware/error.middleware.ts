@@ -1,6 +1,7 @@
 import type { NextFunction, Request, Response } from 'express';
 import { ZodError } from 'zod';
 import { AppError } from '../utils/errors.js';
+import { logger } from '../utils/logger.js';
 
 function zodDetails(error: ZodError) {
   return error.issues.map((issue) => ({ path: issue.path.join('.'), message: issue.message }));
@@ -36,7 +37,7 @@ export function errorMiddleware(err: unknown, req: Request, res: Response, _next
     return;
   }
 
-  console.error(`[${req.id}] unhandled error`, err);
+  logger.error('unhandled_error', { requestId: req.id, method: req.method, path: req.originalUrl, error: err });
   res.status(500).json({ error: { code: 'INTERNAL_ERROR', message: 'Something went wrong', requestId: req.id } });
 }
 

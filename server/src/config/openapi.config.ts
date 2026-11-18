@@ -436,7 +436,9 @@ export const openApiSpec = {
     },
     '/health': {
       get: {
-        summary: 'Liveness and database connectivity',
+        summary: 'Liveness, database connectivity and the classification queue',
+        description:
+          'classificationQueue holds pending, processing and failed counts across all organisations, plus oldestDueSeconds: how long the oldest transaction due for classification has waited. It is null when the database is unreachable.',
         responses: { 200: { description: 'ok' }, 503: { description: 'degraded' } },
       },
     },

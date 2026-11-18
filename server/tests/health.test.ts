@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import request from 'supertest';
 import { buildApp } from '../src/app.js';
+import { createAccount, createOrganisation, createTransaction } from './fixtures.js';
 
 describe('GET /health', () => {
   it('reports ok and carries a request id once the database is connected', async () => {
@@ -8,8 +9,29 @@ describe('GET /health', () => {
     const response = await request(app).get('/health');
 
     expect(response.status).toBe(200);
-    expect(response.body).toEqual({ status: 'ok', db: 'connected' });
+    expect(response.body).toMatchObject({ status: 'ok', db: 'connected' });
     expect(response.headers['x-request-id']).toBeTruthy();
+  });
+
+  it('reports the classification queue, including how long the oldest due row has waited', async () => {
+    const org = await createOrganisation('Health Queue Co');
+    const account = await createAccount(org._id.toString());
+    await createTransaction(org._id.toString(), {
+      accountId: account._id.toString(),
+      amountKobo: 1000n,
+      direction: 'debit',
+      date: new Date(),
+      classificationStatus: 'pending',
+      nextAttemptAt: new Date(Date.now() - 10 * 60 * 1000), // due ten minutes ago
+    });
+
+    const response = await request(buildApp()).get('/health');
+
+    const queue = response.body.classificationQueue;
+    expect(queue.pending).toBeGreaterThanOrEqual(1);
+    expect(typeof queue.processing).toBe('number');
+    expect(typeof queue.failed).toBe('number');
+    expect(queue.oldestDueSeconds).toBeGreaterThanOrEqual(600);
   });
 });
 

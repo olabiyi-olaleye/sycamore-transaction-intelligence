@@ -18,9 +18,11 @@ const QUERY_HOOKS = [
   'updateOne',
 ];
 
-// Only the worker's claim query uses this (it has to search across every
-// organisation for whichever transaction is due next). Set via
-// `.setOptions({ [TENANT_GUARD_BYPASS]: true })`, commented at that call site.
+// Used in exactly two places, both in models/transaction.model.ts and both
+// commented there: the worker's claim query (it has to search every
+// organisation for whichever transaction is due next) and the queue counts
+// for GET /health (numbers only, never documents). Set via
+// `.setOptions({ [TENANT_GUARD_BYPASS]: true })`.
 export const TENANT_GUARD_BYPASS = 'bypassTenantGuard';
 
 interface QueryLike {

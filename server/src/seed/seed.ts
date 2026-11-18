@@ -72,7 +72,7 @@ async function main(): Promise<void> {
     }
   }
 
-  console.log('\nSeed users (password from SEED_PASSWORD / .env.example):');
+  console.log('\nSeed users (password from SEED_PASSWORD in server/.env):');
   for (const seedOrg of SEED_ORGANISATIONS) {
     for (const user of seedOrg.users) {
       console.log(`  ${user.email}  (${seedOrg.name}, ${user.role})`);

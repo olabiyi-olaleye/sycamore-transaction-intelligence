@@ -15,6 +15,7 @@ import { classifyResultSchema } from '../../validation/classification.validation
 import { getClassificationProvider } from './providers.js';
 import { RateLimitedProviderError, type ClassificationProvider, type ClassifyInput, type ClassifyResult } from './provider.js';
 import { classifyWithRules } from './rules.js';
+import { logger } from '../../utils/logger.js';
 
 // A transaction is only given up on after this many bad answers (malformed or
 // unknown category). Outages, timeouts and rate limits never count: they
@@ -47,14 +48,22 @@ function isCircuitOpen(): boolean {
 }
 
 function recordLlmSuccess(): void {
+  if (circuitOpenUntil !== null) {
+    logger.info('circuit_breaker_closed', { afterFailures: consecutiveLlmFailures });
+  }
   consecutiveLlmFailures = 0;
   circuitOpenUntil = null;
 }
 
-function recordLlmFailure(): void {
+function recordLlmFailure(error: unknown): void {
   consecutiveLlmFailures += 1;
+  logger.warn('classification_provider_failed', { consecutiveFailures: consecutiveLlmFailures, error });
   if (consecutiveLlmFailures >= CIRCUIT_BREAKER_THRESHOLD) {
     circuitOpenUntil = Date.now() + CIRCUIT_BREAKER_COOLOFF_MS;
+    logger.warn('circuit_breaker_open', {
+      consecutiveFailures: consecutiveLlmFailures,
+      reopensAt: new Date(circuitOpenUntil).toISOString(),
+    });
   }
 }
 
@@ -124,8 +133,10 @@ async function handleInvalidResponse(
 ): Promise<void> {
   const transactionId = transaction._id.toString();
   const invalidSoFar = transaction.classification.invalidResponses + 1;
+  logger.warn('classification_invalid_response', { organisationId, transactionId, invalidResponses: invalidSoFar, reason: errorMessage });
   if (invalidSoFar >= MAX_INVALID_RESPONSES) {
     await markFailed(organisationId, transactionId, errorMessage);
+    logger.error('classification_gave_up', { organisationId, transactionId, invalidResponses: invalidSoFar });
     await createFlag(organisationId, {
       transactionId,
       type: 'CLASSIFICATION_FAILED',
@@ -182,7 +193,7 @@ async function classifyTransaction(transaction: TransactionDocument): Promise<vo
       await handleInvalidResponse(organisationId, transaction, message);
       return;
     }
-    recordLlmFailure();
+    recordLlmFailure(error);
     const retryAfterMs = error instanceof RateLimitedProviderError ? error.retryAfterMs : undefined;
     await handleUnavailable(organisationId, transaction, message, retryAfterMs);
   }

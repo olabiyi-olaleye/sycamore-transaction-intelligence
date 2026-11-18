@@ -317,7 +317,7 @@ export async function listTransactions(
 /**
  * Claims whichever due transaction comes first: `pending` and due now, or
  * `processing` with an expired lock (a crashed worker's job). This is the
- * one explicit, commented bypass of the tenant-guard plugin. It has to look
+ * one of two commented bypasses of the tenant-guard plugin. It has to look
  * across every organisation at once, since it doesn't know yet which one's
  * transaction is next.
  */
@@ -485,6 +485,47 @@ export async function applyCorrection(
   } finally {
     await session.endSession();
   }
+}
+
+export interface ClassificationQueueStats {
+  pending: number;
+  processing: number;
+  failed: number;
+  // How long the oldest transaction that is due for classification has been
+  // waiting. Near zero when the worker keeps up; it grows during an outage or
+  // when the worker is down, which makes it the number to alert on.
+  oldestDueSeconds: number | null;
+}
+
+/**
+ * Queue counts across every organisation, for GET /health. Like the worker's
+ * claim query, this has to look across organisations, so it's the second
+ * commented bypass of the tenant guard. It only ever returns numbers, never
+ * documents, so nothing about any organisation's transactions leaves it.
+ */
+export async function classificationQueueStats(): Promise<ClassificationQueueStats> {
+  const now = new Date();
+  const count = (status: ClassificationStatus) =>
+    TransactionModel.countDocuments({ 'classification.status': status }).setOptions({ [TENANT_GUARD_BYPASS]: true });
+
+  const [pending, processing, failed, oldestDue] = await Promise.all([
+    count('pending'),
+    count('processing'),
+    count('failed'),
+    TransactionModel.findOne({ 'classification.status': 'pending', 'classification.nextAttemptAt': { $lte: now } })
+      .sort({ 'classification.nextAttemptAt': 1 })
+      .select({ 'classification.nextAttemptAt': 1 })
+      .setOptions({ [TENANT_GUARD_BYPASS]: true })
+      .lean(),
+  ]);
+
+  const dueAt = oldestDue?.classification.nextAttemptAt;
+  return {
+    pending,
+    processing,
+    failed,
+    oldestDueSeconds: dueAt ? Math.max(0, Math.round((now.getTime() - dueAt.getTime()) / 1000)) : null,
+  };
 }
 
 // ---------------------------------------------------------------------------

@@ -23,6 +23,11 @@ export function getRequestContext(): RequestContext {
   return context;
 }
 
+/** For the logger: the current request's context if there is one, otherwise undefined. */
+export function tryGetRequestContext(): RequestContext | undefined {
+  return storage.getStore();
+}
+
 // Throws instead of returning undefined, so a missing organisationId is an
 // error at the point of use, not a silent null a service forgets to check.
 export function requireOrganisationId(): string {

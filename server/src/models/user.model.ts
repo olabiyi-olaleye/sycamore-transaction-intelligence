@@ -26,9 +26,9 @@ const userSchema = new Schema<UserDocument>(
 
 // Not wrapped with tenantScopePlugin, unlike every other tenant collection:
 // logging in means finding a user by email alone, before organisationId is
-// even known, which is the exact kind of query the plugin forbids. The
-// worker's claim query is already the one documented bypass, so this skips
-// the plugin entirely instead of adding a second one. Every other read of
+// even known, which is the exact kind of query the plugin forbids. Rather
+// than mark every login query as a bypass, this collection skips the plugin
+// entirely. Every other read of
 // this collection still filters by organisationId explicitly, below.
 export const UserModel = model<UserDocument>('User', userSchema);
 

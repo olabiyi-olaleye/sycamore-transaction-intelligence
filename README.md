@@ -79,7 +79,7 @@ organisations use it.)
 
 ```bash
 docker compose ps                              # all five services should be "running"
-curl http://localhost:4000/health              # {"status":"ok","db":"connected"}
+curl http://localhost:4000/health              # {"status":"ok","db":"connected","classificationQueue":{...}}
 curl -o /dev/null -w "%{http_code}\n" http://localhost:5173   # 200
 ```
 
@@ -154,7 +154,7 @@ server/src/
     classification/  rules engine, mock LLM provider, the worker's claim loop
     review/      duplicate/large-payment detectors
   seed/          deterministic seed data, loaded through the real import service
-  utils/         money (kobo) parsing/formatting, cursor encoding, typed errors
+  utils/         money (kobo) parsing/formatting, cursor encoding, typed errors, JSON logger
   validation/    Zod schemas at the HTTP boundary
   app.ts         builds the Express app: middleware, routes, error handling
   index.ts       API process entry point
@@ -272,15 +272,19 @@ Three layers, as specified:
    `classification_events`, `review_flags`) with no `organisationId` in the filter, as a
    second line of defence if a model-layer mistake ever shipped.
 
-**One documented exception each way:**
+**The documented exceptions:**
 
-- The worker's claim query (`models/transaction.model.ts`'s `claimNextTransaction`) is the
-  one explicit, commented bypass of the plugin. By design it looks across every
-  organisation at once, since it doesn't yet know which organisation's transaction is next.
+- Two queries bypass the plugin, both in `models/transaction.model.ts`, both commented and
+  both cross-organisation by necessity. The worker's claim query (`claimNextTransaction`)
+  looks across every organisation because it doesn't yet know whose transaction is due
+  next. The queue counts for `GET /health` (`classificationQueueStats`) count rows across
+  all organisations and only ever return numbers, never documents. The operator's
+  `npm run requeue-failed` script is not a bypass: it goes one organisation at a time
+  through the same scoped function the API uses.
 - `users` carries `organisationId` like every other tenant collection, but is **not**
   wrapped with the plugin: logging in means finding a user by email *alone*, before
-  `organisationId` is known, which is exactly the query the plugin exists to forbid. Adding
-  a second bypass for it would have contradicted the rule that there's only one. Every other
+  `organisationId` is known, which is exactly the query the plugin exists to forbid. Rather
+  than mark every login query as a bypass, `users` skips the plugin entirely. Every other
   read of `users` still takes `organisationId` as an explicit filter (defence in depth, just
   without the Mongoose-level backstop).
 
@@ -292,7 +296,7 @@ accounts, transactions, review flags, and corrections.
 `ClassificationProvider` (`services/classification/provider.ts`) is a small interface (one
 `classify(input, signal)` method), and `services/classification/providers.ts` maps a
 `CLASSIFIER_PROVIDER` setting to an implementation. Only `mock` exists today. Adding a real
-vendor means writing one class that implements the interface, registering it there and
+vendor means writing one object that implements the interface, registering it there and
 adding its name to the enum in `config/env.ts`; the worker, retries, circuit breaker, review
 flags and history don't change. A test plugs in a fake provider at runtime and checks that
 its answer and its name end up on the transaction and in `classification_events`
@@ -333,9 +337,26 @@ let every one of those failure paths be exercised on demand; `setMockLlmMode` /
 `setMockLlmFailureRate` (`mockLlmProvider.ts`) make that possible mid-test-run without a
 restart.
 
+### Observability
+
+- **Structured logs** (`utils/logger.ts`): one JSON object per line, filtered by
+  `LOG_LEVEL`. Every HTTP request logs `http_request` with its `requestId`, `organisationId`,
+  method, path, status and duration; the same `requestId` is returned in the `x-request-id`
+  header and in every error body, so a support ticket can be traced to its log lines.
+- **Worker events**: `classification_provider_failed`, `circuit_breaker_open` (with when it
+  reopens), `circuit_breaker_closed`, `classification_invalid_response`,
+  `classification_gave_up` and `worker_iteration_failed`. An outage shows up as a run of
+  provider failures followed by `circuit_breaker_open`.
+- **`GET /health`** reports the database connection plus `classificationQueue`: `pending`,
+  `processing`, `failed` and `oldestDueSeconds`, how long the oldest due transaction has
+  been waiting. That last number stays near zero while the worker keeps up and climbs when
+  the provider is down or no worker is running, so it's the one to alert on. The status
+  code only reflects the API and database, because imports keep working while
+  classification is behind.
+
 ## 7. Testing
 
-94 tests, Vitest, `supertest` against the Express app, run against a real MongoDB replica
+96 tests, Vitest, `supertest` against the Express app, run against a real MongoDB replica
 set (no mocked database). `server/tests/setup.ts` connects once per run; most fixtures use a
 fresh organisation/user per test so tests never depend on execution order. The one
 exception is `classification.test.ts`, which documents at the top of the file why it drains
@@ -453,6 +474,6 @@ and if it's just sitting there un-mined, that's the real process gap to close.
 - Search by reference is an exact match: a single token with a digit in it is treated as a
   reference rather than text, because Mongo's text index splits `TRF/0012` into pieces.
   Partial reference search would need a prefix index or a search engine.
-- `GET /health` reports database connectivity but not the pending-classification backlog
-  size in its body yet. `pendingClassificationCount` is already computed for the dashboard
-  and would be a small addition to wire the same query into the health check.
+- No metrics endpoint or tracing. Logs are structured and the health check exposes the
+  queue, which covers the basics; Prometheus counters for classifications by source,
+  provider latency and breaker state would be next.
