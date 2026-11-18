@@ -333,3 +333,7 @@ about their certainty.
 - Only one admin-only endpoint; a real deployment would want finer permissions.
 - A real provider adapter (for example an OpenAI model with a JSON schema response) behind
   the existing interface.
+
+## How I worked
+
+I used an AI coding assistant for parts of the implementation and the tests. The design decisions are mine.
