@@ -443,13 +443,20 @@ describe('backlog drains once the provider recovers', () => {
       ),
     );
 
-    for (let i = 0; i < 3; i += 1) {
+    // The claim queue is shared with leftovers from other tests, so a claim
+    // may pick up someone else's row first. Keep claiming until each of ours
+    // has had its failed attempt, rather than assuming the next 3 are ours.
+    const ourIds = created.map((c) => c._id);
+    for (let i = 0; i < 30; i += 1) {
+      const untried = await TransactionModel.countDocuments({ organisationId: orgId, _id: { $in: ourIds }, 'classification.attempts': 0 });
+      if (untried === 0) break;
       await processOneClaimedTransaction();
     }
 
-    const stillPending = await TransactionModel.find({ organisationId: orgId, _id: { $in: created.map((c) => c._id) } }).lean();
-    expect(stillPending.every((tx) => tx.classification.status === 'pending')).toBe(true);
-    expect(await processOneClaimedTransaction()).toBe('empty'); // nothing due yet, backoff hasn't elapsed
+    const afterOutage = await TransactionModel.find({ organisationId: orgId, _id: { $in: ourIds } }).lean();
+    expect(afterOutage.every((tx) => tx.classification.status === 'pending')).toBe(true);
+    // Nothing of ours is due again yet: the backoff hasn't elapsed.
+    expect(afterOutage.every((tx) => (tx.classification.nextAttemptAt?.getTime() ?? 0) > Date.now())).toBe(true);
 
     setMockLlmMode('ok');
     await wait(2600); // past the first backoff window
