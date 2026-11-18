@@ -293,7 +293,14 @@ describe('POST /api/v1/classification/retry-failed', () => {
     const untouched = await TransactionModel.findOne({ organisationId: otherOrg._id, _id: otherTx._id }).lean();
     expect(untouched?.classification.status).toBe('failed');
 
-    setMockLlmMode('ok');
+    // A fixed, confident answer: the mock's confidence depends on the
+    // narration, and a LOW_CONFIDENCE flag would keep reviewStatus 'open'.
+    setClassificationProvider({
+      name: 'fake-vendor',
+      async classify() {
+        return { category: 'OTHER', confidence: 0.9, reason: 'Fixed answer for this test' };
+      },
+    });
     for (let i = 0; i < 30; i += 1) {
       const current = await TransactionModel.findOne({ organisationId: orgId, _id: tx._id }).lean();
       if (current?.classification.status === 'classified') break;
